@@ -1,0 +1,31 @@
+# Temporary audit and tool output
+.tmp/
+*.log
+
+# Local credentials and environment
+.env
+.env.*
+!.env.example
+.clasprc.json
+
+# Runtime health data and cloud shortcuts
+BioOS_NVRAM*.json
+BioOS_NVRAM*.bak
+BioOS_ROM.json
+*.gsheet
+*.gscript
+data/raw/
+data/backups/
+data/legacy-config/
+archive/
+
+# Generated recovery slots
+BioOS_NVRAM.slotA.json
+BioOS_NVRAM.slotB.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+node_modules/
