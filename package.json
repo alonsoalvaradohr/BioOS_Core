@@ -1,10 +1,11 @@
 {
   "name": "bioos-core",
-  "version": "5.0.1",
+  "version": "5.1.0",
   "private": true,
   "description": "Kernel cognitivo y canal de ingesta BioOS sobre Google Apps Script.",
   "scripts": {
     "check": "node scripts/validate.mjs",
+    "audit": "node scripts/audit-state.mjs",
     "test": "node --test apps-script/qa/*.node.test.js",
     "verify": "npm run check && npm test",
     "clasp:status": "clasp status",

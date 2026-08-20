@@ -10,6 +10,7 @@ Configurar en Script Properties, nunca en archivos versionados:
 - `TELEGRAM_SECRET_TOKEN`
 - `BIOOS_WEB_APP_URL`: URL HTTPS del proxy autenticado `workers.dev`
 - `BIOOS_DB_ID`: recomendado para evitar búsquedas ambiguas
+- `BIOOS_OPS_APPROVAL_TOKEN`: mínimo 24 caracteres; requerido para migraciones y emergencias
 - `VFS_FOLDER_ID`, `VFS_ROM_ID`, `VFS_NVRAM_ID`: recomendados tras aprovisionar almacenamiento
 
 ## Validación y release
@@ -18,7 +19,7 @@ Configurar en Script Properties, nunca en archivos versionados:
 npm run verify
 clasp status
 clasp push
-clasp version "BioOS v5.0.1 - foundation hardening"
+clasp version "BioOS v5.1.0 - runtime hardening"
 clasp deployments
 ```
 
@@ -34,8 +35,13 @@ Para producción, actualizar un deployment existente con `clasp redeploy`; conse
 | `provisionBioOSStorage()` | Crea únicamente particiones ausentes |
 | `QA_RunIsolatedSuite()` | Pruebas con fakes, sin producción |
 | `repairNVRAMFromRecoverySlot('A'|'B')` | Recuperación explícita desde slot verificado |
+| `getRuntimeStateSummary()` | Resumen seguro de ROM, NVRAM y capacidades |
+| `migrateNVRAMToCurrentSchema(token)` | Migra y crea un slot verificable; requiere aprobación |
+| `installCanonicalV5Prompts(token)` | Añade solo prompts faltantes y crea snapshot ROM |
+| `emergencyStopManagedTriggers(token)` | Detiene solo triggers administrados; conserva la cola |
+| `emergencyPurgeQueue(token, 'PURGE_QUEUE')` | Purga explícita de cola con doble confirmación |
 
-`executeFactoryResetVFS()` está deliberadamente deshabilitada y siempre lanza un error.
+`executeFactoryResetVFS()` y la función heredada `emergencyStopAndPurge()` están deliberadamente deshabilitadas y siempre lanzan un error.
 
 ## Rollback
 

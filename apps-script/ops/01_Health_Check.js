@@ -8,10 +8,12 @@ function healthCheckBioOS() {
   const startedAt = new Date().toISOString();
   const checks = [
     _opsCheckConfiguration_(),
+    _opsCheckCapabilities_(),
     _opsCheckSecrets_(),
     _opsCheckVfs_(),
     _opsCheckDatabase_(),
     _opsCheckAgentRegistry_(),
+    _opsCheckSensors_(),
     _opsCheckTriggers_(),
     _opsCheckWebhook_()
   ];
@@ -45,9 +47,15 @@ function preflightDeployment() {
 }
 
 function _opsCheckConfiguration_() {
-  const required = ['SYS_FLAGS', 'TIMING', 'RESILIENCE', 'MEMORY_LIMITS', 'LOGGING', 'AGENTS'];
+  const required = ['CAPABILITIES', 'SYS_FLAGS', 'TIMING', 'RESILIENCE', 'MEMORY_LIMITS', 'LOGGING', 'AGENTS'];
   const missing = required.filter(function(key) { return typeof BIOOS_CONFIG === 'undefined' || !BIOOS_CONFIG[key]; });
   return _opsResult_('configuration', missing.length === 0 ? 'PASS' : 'FAIL', missing.length === 0 ? 'Configuración base disponible.' : 'Secciones de configuración ausentes: ' + missing.join(', '));
+}
+
+function _opsCheckCapabilities_() {
+  const configured = (typeof BIOOS_CONFIG !== 'undefined' && BIOOS_CONFIG.CAPABILITIES) || {};
+  const enabled = Object.keys(configured).filter(function(key) { return configured[key] === true; });
+  return _opsResult_('capabilities', 'PASS', 'Capacidades opt-in evaluadas; las deshabilitadas permanecen cerradas.', { enabled: enabled });
 }
 
 function _opsCheckSecrets_() {
@@ -84,8 +92,11 @@ function _opsCheckVfs_() {
     const nvram = JSON.parse(nvramFile.getBlob().getDataAsString());
     const partitions = ['L0_Ingestion_Cursors', 'L1_Working', 'L2_Episodic', 'L3_Semantic', 'L4_Basal'];
     const missing = partitions.filter(function(key) { return !nvram[key]; });
-    if (!rom || !rom._version || missing.length) return _opsResult_('vfs', 'FAIL', 'Estructura VFS inválida; particiones ausentes: ' + missing.join(', '));
-    return _opsResult_('vfs', 'PASS', 'ROM/NVRAM legibles y con particiones L0-L4.', { folderId: folder.getId(), romId: romFile.getId(), nvramId: nvramFile.getId(), romVersion: rom._version });
+    const schema = Number(nvram._bioos_memory_schema || 0);
+    if (!rom || !rom._version || missing.length || schema !== 2 || !Array.isArray(nvram.L2_Episodic.raw_data_lake)) {
+      return _opsResult_('vfs', 'FAIL', 'Estructura VFS requiere migración explícita; particiones ausentes: ' + (missing.join(', ') || 'ninguna') + '; esquema=' + schema + '. Ejecute migrateNVRAMToCurrentSchema con aprobación.');
+    }
+    return _opsResult_('vfs', 'PASS', 'ROM/NVRAM legibles, esquema 2 y particiones L0-L4.', { folderId: folder.getId(), romId: romFile.getId(), nvramId: nvramFile.getId(), romVersion: rom._version, memorySchema: schema });
   } catch (error) {
     return _opsResult_('vfs', 'FAIL', 'VFS inaccesible o corrupto: ' + _opsSafeError_(error));
   }
@@ -105,10 +116,22 @@ function _opsCheckDatabase_() {
     }
     const queue = spreadsheet.getSheetByName('Queue_NLP');
     if (!queue) return _opsResult_('database', 'FAIL', 'Hoja Queue_NLP ausente; preflight no la creará.');
-    return _opsResult_('database', 'PASS', 'Repositorio disponible en modo lectura.', { spreadsheetId: spreadsheet.getId(), queueRows: queue.getLastRow() });
+    const expected = ['RECEIVED_AT','JOB_ID','IDEMPOTENCY_KEY','STATUS','ATTEMPTS','LEASE_UNTIL','MESSAGE','METADATA_JSON','LAST_ERROR'];
+    const width = Math.max(2, queue.getLastColumn());
+    const headers = queue.getLastRow() ? queue.getRange(1, 1, 1, width).getValues()[0].slice(0, expected.length) : [];
+    const current = expected.every(function(value, index) { return headers[index] === value; });
+    if (!current) return _opsResult_('database', 'FAIL', 'Queue_NLP usa encabezados heredados o desconocidos; la migración debe ejecutarse mediante el repositorio.', { headers: headers });
+    return _opsResult_('database', 'PASS', 'Repositorio y esquema durable de cola disponibles en modo lectura.', { spreadsheetId: spreadsheet.getId(), queueRows: Math.max(0, queue.getLastRow() - 1) });
   } catch (error) {
     return _opsResult_('database', 'FAIL', 'Repositorio inaccesible: ' + _opsSafeError_(error));
   }
+}
+
+function _opsCheckSensors_() {
+  const props = PropertiesService.getScriptProperties();
+  const mobvoiReady = !!(props.getProperty('MOBVOI_API_ENDPOINT') && props.getProperty('MOBVOI_API_TOKEN'));
+  if (mobvoiReady) return _opsResult_('sensors', 'PASS', 'Proveedor Mobvoi primario configurado; Google Fit queda como fallback.');
+  return _opsResult_('sensors', 'WARN', 'Mobvoi primario no está configurado; operación biométrica degradada al fallback de Google Fit.', { primary: 'unavailable', fallback: 'google-fit' });
 }
 
 function _opsCheckTriggers_() {

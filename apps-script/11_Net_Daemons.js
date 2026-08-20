@@ -62,16 +62,19 @@ function workerProcessNLP() {
 }
 
 function _workerBuildPayload_(jobs) {
-  return jobs.map(function(job) {
+  var items = jobs.map(function(job) {
     var metadata = job.metadata || {};
-    if (metadata.kind !== 'telegram_voice') return job.message;
+    if (metadata.kind !== 'telegram_voice') {
+      return { kind: 'text', text: String(job.message || ''), eventId: metadata.updateId || job.idempotencyKey };
+    }
     if (!metadata.fileId) throw new Error('[VOICE_METADATA] fileId ausente en job ' + job.jobId);
     // The worker is the only place permitted to fetch media.  Base64 is held only
     // for this execution and is never written back to L0.
     var base64Audio = _downloadTelegramVoice(metadata.fileId);
-    return JSON.stringify({ _type: 'multimodal_voice', mimeType: metadata.mimeType || 'audio/ogg', data: base64Audio,
-      source: 'telegram', eventId: metadata.updateId || job.idempotencyKey });
-  }).join('\n[SIGUIENTE_MENSAJE]: ');
+    return { kind: 'voice', mimeType: metadata.mimeType || 'audio/ogg', data: base64Audio,
+      eventId: metadata.updateId || job.idempotencyKey };
+  });
+  return JSON.stringify({ _type: 'bioos_ingress_batch', items: items });
 }
 
 function _workerLeaseMs_() { return _workerPropertyInt_('BIOOS_QUEUE_LEASE_MS', 120000, 10000, 300000); }
@@ -145,18 +148,5 @@ function installCronobiologicalTriggers() {
 }
 
 function emergencyStopAndPurge() {
-  const props = PropertiesService.getScriptProperties();
-  props.deleteProperty("PROCESSED_UPDATES");
-
-  const triggers = ScriptApp.getProjectTriggers();
-  for (let i = 0; i < triggers.length; i++) {
-    ScriptApp.deleteTrigger(triggers[i]);
-  }
-
-  // PURGA DE EMERGENCIA DELEGADA AL REPOSITORIO
-  // El repositorio es el único propietario del lock de la cola; bloquear aquí
-  // provocaba auto-deadlock cuando repoEmergencyPurgeQueue adquiría ScriptLock.
-  if (typeof repoEmergencyPurgeQueue === "function") repoEmergencyPurgeQueue();
-
-  console.warn("[SRE] Paro de Emergencia Completado. Triggers destruidos y cola purgada.");
+  throw new Error("[EMERGENCY_LEGACY_DISABLED] Use las operaciones autenticadas de ops/02_Runtime_Maintenance.js.");
 }

@@ -60,18 +60,20 @@ function compileQualitativeFeedback(rawInput) {
     if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("PROCESS", "Compilador MOMA: Extrayendo subespacios cualitativos y prospectivos...");
 
     let isVoice = false;
-    let audioBase64 = null;
     let rawText = rawInput;
+    let ingressItems = [];
 
-    // [INYECCIÓN MULTIMODAL]: Detección del envoltorio SRE de Telegram Voice
+    // Typed ingress supports mixed text/voice batches while retaining the
+    // former single-voice envelope for backwards compatibility.
     try {
       const parsed = JSON.parse(rawInput);
       if (parsed._type === "multimodal_voice" && parsed.data) {
-        isVoice = true;
-        audioBase64 = parsed.data;
+        ingressItems = [{ kind: "voice", mimeType: parsed.mimeType || "audio/ogg", data: parsed.data, eventId: parsed.eventId || "legacy" }];
+      } else if (parsed._type === "bioos_ingress_batch" && Array.isArray(parsed.items)) {
+        ingressItems = parsed.items.slice(0, 10);
       }
     } catch (e) {
-      // Es texto plano normal, continuamos en modo Legacy
+      ingressItems = [];
     }
 
     const schema = {
@@ -98,16 +100,31 @@ Extrae EXCLUSIVAMENTE vectores de estado biológico, psicológico y nutricional 
 
     let userPayloadParam;
 
-    if (isVoice) {
-      if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("PROCESS", "[MOMA] Procesando inferencia acústica (Voice-to-JSON)...");
-      // Formato nativo Array de Gemini Multimodal
-      userPayloadParam = [
-        { "inlineData": { "mimeType": "audio/ogg", "data": audioBase64 } },
-        { "text": "Escucha atentamente esta nota de voz del usuario y extrae la información cualitativa solicitada." }
-      ];
+    if (ingressItems.length) {
+      const parts = [];
+      const texts = [];
+      ingressItems.forEach(function(item) {
+        if (item && item.kind === "voice") {
+          if (typeof item.data !== "string" || !item.data || item.data.length > 12000000) throw new Error("[VOICE_PAYLOAD_INVALID] Audio ausente o demasiado grande.");
+          const mimeType = typeof item.mimeType === "string" && /^audio\/[a-z0-9.+-]+$/i.test(item.mimeType) ? item.mimeType : "audio/ogg";
+          parts.push({ inlineData: { mimeType: mimeType, data: item.data } });
+          isVoice = true;
+        } else if (item && item.kind === "text" && typeof item.text === "string" && item.text.trim()) {
+          texts.push(item.text.trim());
+        }
+      });
+      const combinedText = texts.join("\n[SIGUIENTE_MENSAJE]: ").substring(0, 100000);
+      if (isVoice) {
+        parts.unshift({ text: "Mensajes de texto asociados:\n" + combinedText + "\nEscucha las notas de voz y extrae únicamente la información cualitativa solicitada." });
+        userPayloadParam = parts;
+      } else {
+        userPayloadParam = recordProvenance({ text: combinedText }, "Telegram_Text_Batch", false);
+      }
     } else {
       userPayloadParam = recordProvenance({ text: rawText }, "Telegram_Text", false);
     }
+
+    if (isVoice && typeof sendSystemTelemetry === "function") sendSystemTelemetry("PROCESS", "[MOMA] Procesando inferencia acústica (Voice-to-JSON)...");
 
     const compiledData = invokeUniversalLLM(prompt, userPayloadParam, schema, 0.1);
 

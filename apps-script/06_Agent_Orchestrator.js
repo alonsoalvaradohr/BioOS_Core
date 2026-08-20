@@ -38,8 +38,10 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
   if (triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING') {
     // Sensor_Engine is sole owner of Mobvoi/Fit selection and normalized DTOs.
     payload.biometric_snapshot = _safeETL('Sensor_Engine', typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot : null, { source: 'unavailable', available: false, data: null });
-    payload.workspace_agenda = _safeETL('Calendar_API', typeof fetchTodayCalendarEvents === 'function' ? fetchTodayCalendarEvents : null, []);
-    payload.workspace_emails = _safeETL('Gmail_API', typeof fetchRecentUnreadContext === 'function' ? fetchRecentUnreadContext : null, []);
+    if (_orchestratorCapabilityEnabled_('WORKSPACE_CONTEXT')) {
+      payload.workspace_agenda = _safeETL('Calendar_API', typeof fetchTodayCalendarEvents === 'function' ? fetchTodayCalendarEvents : null, []);
+      payload.workspace_emails = _safeETL('Gmail_API', typeof fetchRecentUnreadContext === 'function' ? fetchRecentUnreadContext : null, []);
+    }
   } else if (triggerEvent === 'USER_FEEDBACK') {
     payload.user_nlp = typeof compileQualitativeFeedback === 'function' ? compileQualitativeFeedback(rawPayload) : rawPayload;
   } else throw new Error('[CORE_FAULT] Trigger no reconocido: ' + triggerEvent);
@@ -84,7 +86,7 @@ function _auditSpecialistCluster_(responses, context) {
 
 function _injectAuditedTasks_(hypotheses, context) {
   let count = 0;
-  if (typeof createProactiveTask !== 'function') return count;
+  if (!_orchestratorCapabilityEnabled_('EXTERNAL_TASKS') || typeof createProactiveTask !== 'function') return count;
   Object.keys(hypotheses || {}).forEach(function(specialist) {
     const tasks = hypotheses[specialist] && Array.isArray(hypotheses[specialist].tareas_ejecutivas) ? hypotheses[specialist].tareas_ejecutivas : [];
     tasks.slice(0, 3).forEach(function(task) {
@@ -114,4 +116,5 @@ function _orchestratorBlockActions_(hypothesis, reason) { let clone = {}; try { 
 function _orchestratorRequireBudget_(context, minimumMs, phase) { if (Core_remainingBudgetMs(context) < minimumMs) throw new Error('[ORCHESTRATOR_DEADLINE] Presupuesto agotado antes de ' + phase + '.'); }
 function _orchestratorTelemetry_(context, severity, message, fields) { if (typeof sendContextualTelemetry === 'function') return sendContextualTelemetry(context, severity, message, fields); if (typeof sendSystemTelemetry === 'function') return sendSystemTelemetry(severity, message, fields); }
 function _orchestratorJson_(value, maxChars, fallback) { try { return JSON.stringify(value).substring(0, maxChars); } catch (ignore) { return fallback; } }
+function _orchestratorCapabilityEnabled_(name) { return !!(typeof BIOOS_CONFIG !== 'undefined' && BIOOS_CONFIG.CAPABILITIES && BIOOS_CONFIG.CAPABILITIES[name] === true); }
 function _calculateCognitiveCooldown(sessionEvents, thresholdHours) { const events = Array.isArray(sessionEvents) ? sessionEvents : []; const matches = events.filter(function(event) { return event && event.origin === 'USER_FEEDBACK'; }).sort(function(a, b) { return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(); }); if (!matches.length) return { active: false, hoursSince: 999 }; const hours = (Date.now() - new Date(matches[0].timestamp).getTime()) / 3600000; return { active: hours <= (thresholdHours || 12), hoursSince: Number(hours.toFixed(1)) }; }

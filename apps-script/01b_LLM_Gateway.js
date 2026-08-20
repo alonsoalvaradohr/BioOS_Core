@@ -30,9 +30,6 @@ function invokeUniversalLLM(systemPrompt, userPayload, schema = null, temperatur
   const apiKey = props.getProperty("GEMINI_API_KEY");
   if (!apiKey) throw new Error("[SYS_PANIC] GEMINI_API_KEY ausente en caché L1.");
 
-  // 1. Verificación del Circuit Breaker Diario
-  _checkAndConsumeDailyQuota();
-
   let lastErrorCode = 0;
   let lastErrorText = "";
 
@@ -55,7 +52,7 @@ function invokeUniversalLLM(systemPrompt, userPayload, schema = null, temperatur
       "systemInstruction": { "parts": [{ "text": systemPrompt }] },
       "contents": [{ "role": "user", "parts": requestParts }],
       "generationConfig": {
-        "temperature": temperature
+        "temperature": Math.max(0, Math.min(2, Number(temperature) || 0))
       }
     };
 
@@ -64,6 +61,8 @@ function invokeUniversalLLM(systemPrompt, userPayload, schema = null, temperatur
       payload.generationConfig.responseSchema = schema;
     }
 
+    // Cada intento de red consume cuota; los fallbacks también cuentan.
+    _checkAndConsumeDailyQuota();
     const response = UrlFetchApp.fetch(url, {
       method: "post",
       contentType: "application/json",
@@ -116,26 +115,26 @@ function invokeUniversalLLM(systemPrompt, userPayload, schema = null, temperatur
  * ==============================================================================
  */
 function _checkAndConsumeDailyQuota() {
-  const props = PropertiesService.getScriptProperties();
-  const today = new Date().toISOString().split('T')[0];
-  const savedDate = props.getProperty("QUOTA_DATE");
-  let currentUsage = parseInt(props.getProperty("QUOTA_USAGE") || "0", 10);
-
-  if (savedDate !== today) {
-    currentUsage = 0;
-    props.setProperty("QUOTA_DATE", today);
-  }
-
-  if (currentUsage >= _MAX_DAILY_REQUESTS) {
-    if (typeof sendSystemTelemetry === "function") {
-      sendSystemTelemetry("FATAL", `[QUOTA_BREAKER] Presupuesto diario LLM agotado (${currentUsage}/${_MAX_DAILY_REQUESTS}).`);
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const today = new Date().toISOString().split('T')[0];
+    const savedDate = props.getProperty("QUOTA_DATE");
+    let currentUsage = parseInt(props.getProperty("QUOTA_USAGE") || "0", 10);
+    if (savedDate !== today) {
+      currentUsage = 0;
+      props.setProperty("QUOTA_DATE", today);
     }
-    throw new Error("[QUOTA_EXHAUSTED] Límite de seguridad alcanzado. Red paralizada.");
+    if (currentUsage >= _MAX_DAILY_REQUESTS) {
+      if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("FATAL", `[QUOTA_BREAKER] Presupuesto diario LLM agotado (${currentUsage}/${_MAX_DAILY_REQUESTS}).`);
+      throw new Error("[QUOTA_EXHAUSTED] Límite de seguridad alcanzado. Red paralizada.");
+    }
+    props.setProperty("QUOTA_USAGE", (currentUsage + 1).toString());
+  } finally {
+    lock.releaseLock();
   }
-
-  props.setProperty("QUOTA_USAGE", (currentUsage + 1).toString());
 }
-
 /**
  * Utilidad SRE: Resetea manualmente el contador de cuota diaria de la pasarela.
  */

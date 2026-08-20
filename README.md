@@ -2,11 +2,11 @@
 
 BioOS es un kernel cognitivo personal desplegado sobre Google Apps Script. Recibe eventos autenticados de Telegram, consolida telemetría y contexto en una memoria jerárquica, ejecuta agentes con contratos explícitos y conserva un registro operativo verificable.
 
-La fuente canónica es la versión 5.0.1 ubicada en `apps-script/`. El código v4 encontrado en la carpeta original se conserva, sin intervenir, en `archive/legacy-v4/`.
+La fuente canónica es la versión 5.1.0 ubicada en `apps-script/`. El código v4 encontrado en la carpeta original se conserva, sin intervenir, en `archive/legacy-v4/`.
 
 ## Estado
 
-- Fuente local alineada con la versión remota 37 y endurecida como 5.0.1.
+- Fuente local alineada con la deployment estable v38 y preparada como 5.1.0.
 - Pruebas Node aisladas disponibles y sin acceso a Drive, Sheets, red o triggers.
 - Webhook directo de Apps Script cerrado por diseño; producción requiere un proxy autenticado `workers.dev`.
 - Reset destructivo eliminado. La recuperación usa slots NVRAM verificables.
@@ -58,7 +58,7 @@ clasp status
 6. Ejecutar `preflightDeployment()` en Apps Script.
 7. Confirmar el proxy y el webhook mediante una prueba controlada.
 
-Los detalles están en [docs/OPERATIONS.md](docs/OPERATIONS.md). La arquitectura está descrita en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Los detalles están en [docs/OPERATIONS.md](docs/OPERATIONS.md), el estado y las fases pendientes en [docs/ROADMAP.md](docs/ROADMAP.md), y la arquitectura en [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Seguridad y datos
 

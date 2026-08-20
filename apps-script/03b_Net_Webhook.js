@@ -7,6 +7,8 @@
  * voz de Telegram, conversión a Base64 en runtime y encolamiento a L0.
  * ==============================================================================
  */
+const _NET_MAX_VOICE_BYTES = 8 * 1024 * 1024;
+
 
 function doPost(e) {
   try {
@@ -54,6 +56,14 @@ function doPost(e) {
     }
     else if (update.message.voice) {
       const voice = update.message.voice;
+      if (!(BIOOS_CONFIG.CAPABILITIES && BIOOS_CONFIG.CAPABILITIES.VOICE_INPUT === true)) {
+        if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("WARNING", "[VOICE_DISABLED] Nota de voz ignorada por política.");
+        return _silentDrop();
+      }
+      if (Number(voice.file_size || 0) > _NET_MAX_VOICE_BYTES) {
+        if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("WARNING", "[VOICE_TOO_LARGE] Nota de voz rechazada antes de encolar.");
+        return _silentDrop();
+      }
       // The worker resolves file_id later.  The queue stores metadata only, never
       // an inflated base64 blob or Telegram credentials.
       enqueueAndDispatchNLP('[VOICE_MESSAGE]', _netBuildIngressOptions_(update, 'telegram_voice', {
@@ -97,9 +107,10 @@ function _constantTimeEquals(expected, actual) {
 function _downloadTelegramVoice(fileId) {
   const token = PropertiesService.getScriptProperties().getProperty("TELEGRAM_BOT_TOKEN");
   if (!token) throw new Error("Token ausente para descarga de audio.");
+  if (typeof fileId !== "string" || !/^[A-Za-z0-9_-]{1,512}$/.test(fileId)) throw new Error("Identificador de audio inválido.");
 
   // Paso A: Obtener la ruta del archivo
-  const fileInfoUrl = `https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`;
+  const fileInfoUrl = `https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`;
   const fileInfoResponse = UrlFetchApp.fetch(fileInfoUrl, { muteHttpExceptions: true });
 
   if (fileInfoResponse.getResponseCode() !== 200) {
@@ -107,14 +118,18 @@ function _downloadTelegramVoice(fileId) {
   }
 
   const fileInfo = JSON.parse(fileInfoResponse.getContentText());
-  if (!fileInfo.ok) throw new Error("El objeto de ruta del archivo está corrupto.");
+  if (!fileInfo.ok || !fileInfo.result || typeof fileInfo.result.file_path !== "string") throw new Error("El objeto de ruta del archivo está corrupto.");
+  if (Number(fileInfo.result.file_size || 0) > _NET_MAX_VOICE_BYTES) throw new Error("La nota de voz excede el límite permitido.");
 
   // Paso B: Descargar el binario y codificar a Base64
   const filePath = fileInfo.result.file_path;
   const downloadUrl = `https://api.telegram.org/file/bot${token}/${filePath}`;
 
-  const audioBlob = UrlFetchApp.fetch(downloadUrl).getBlob();
-  return Utilities.base64Encode(audioBlob.getBytes());
+  const audioResponse = UrlFetchApp.fetch(downloadUrl, { muteHttpExceptions: true, followRedirects: false });
+  if (audioResponse.getResponseCode() !== 200) throw new Error("Telegram rechazó la descarga del audio.");
+  const bytes = audioResponse.getBlob().getBytes();
+  if (bytes.length > _NET_MAX_VOICE_BYTES) throw new Error("La nota de voz descargada excede el límite permitido.");
+  return Utilities.base64Encode(bytes);
 }
 
 function _silentDrop() {

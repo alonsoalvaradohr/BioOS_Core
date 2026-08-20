@@ -17,8 +17,16 @@ function _deepFreeze_(value) {
 }
 
 const BIOOS_CONFIG = _deepFreeze_({
-  VERSION: "5.0.1",
+  VERSION: "5.1.0",
   RELEASE_CHANNEL: "stable",
+
+  // Capabilities are source-controlled and fail closed. Enabling one may also
+  // require adding its OAuth scope back to appsscript.json and redeploying.
+  CAPABILITIES: {
+    WORKSPACE_CONTEXT: false,
+    EXTERNAL_TASKS: false,
+    VOICE_INPUT: true
+  },
 
   // ----------------------------------------------------------------------------
   // [1] SYSTEM FLAGS (Banderas SRE y Mantenimiento)
