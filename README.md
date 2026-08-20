@@ -6,7 +6,7 @@ La fuente canónica es la versión 5.1.0 ubicada en `apps-script/`. El código v
 
 ## Estado
 
-- Fuente local alineada con la deployment estable v38 y preparada como 5.1.0.
+- Fuente local alineada con la deployment estable v39 con BioOS 5.1.0.
 - Pruebas Node aisladas disponibles y sin acceso a Drive, Sheets, red o triggers.
 - Webhook directo de Apps Script cerrado por diseño; producción requiere un proxy autenticado `workers.dev`.
 - Reset destructivo eliminado. La recuperación usa slots NVRAM verificables.
