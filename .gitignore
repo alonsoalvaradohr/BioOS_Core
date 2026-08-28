@@ -1,31 +1,44 @@
-# Temporary audit and tool output
-.tmp/
-*.log
-
-# Local credentials and environment
+# === SECRETOS Y CREDENCIALES (INVIOLABLE — EPSILON VETO ABSOLUTO) ===
 .env
 .env.*
 !.env.example
 .clasprc.json
+*.pem
+*.key
+*.p12
+*.pfx
 
-# Runtime health data and cloud shortcuts
+# === DATOS BIOMÉTRICOS Y RUNTIME PRIVADOS (INVIOLABLE) ===
 BioOS_NVRAM*.json
 BioOS_NVRAM*.bak
 BioOS_ROM.json
+BioOS_NVRAM.slotA.json
+BioOS_NVRAM.slotB.json
+
+# === ATAJOS DE GOOGLE DRIVE (SIN VALOR EN GIT) ===
 *.gsheet
 *.gscript
+
+# === DATOS CRUDOS Y BACKUPS ===
 data/raw/
 data/backups/
 data/legacy-config/
 archive/
 
-# Generated recovery slots
-BioOS_NVRAM.slotA.json
-BioOS_NVRAM.slotB.json
+# === RUNTIME Y ARTEFACTOS TEMPORALES ===
+.tmp/
+*.log
+.pio/
+dist/
+build/
 
-# OS/editor noise
+# === DEPENDENCIAS ===
+node_modules/
+
+# === OS Y EDITOR ===
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
-node_modules/
+*.suo
+*.user
