@@ -12,18 +12,19 @@ function compileBiometricTelemetry(rhr, sleep, steps) {
   return executeWithResilience("Compiler_Biometrics", () => {
     if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("PROCESS", "Compilador MOMA: Cuantizando telemetría y auditando ceguera sensorial...");
 
-    let isSleepOffline = (!sleep || sleep === 0);
-    let isRHROffline = (!rhr || rhr === 0);
+    const hasRhr = (rhr !== undefined && rhr !== null && rhr !== 0 && rhr !== "SENSOR_OFFLINE" && isFinite(Number(rhr)) && Number(rhr) > 0);
+    const hasSleep = (sleep !== undefined && sleep !== null && sleep !== 0 && sleep !== "SENSOR_OFFLINE" && isFinite(Number(sleep)) && Number(sleep) > 0);
+    const hasSteps = (steps !== undefined && steps !== null && steps !== "SENSOR_OFFLINE" && isFinite(Number(steps)) && Number(steps) >= 0);
 
-    if (isSleepOffline && typeof sendSystemTelemetry === "function") sendSystemTelemetry("WARNING", "[MOMA] Sensor de sueño inalcanzable. Falsificación matemática bloqueada.");
-    if (isRHROffline && typeof sendSystemTelemetry === "function") sendSystemTelemetry("WARNING", "[MOMA] Sensor PPG inalcanzable. Falsificación matemática bloqueada.");
+    if (!hasSleep && typeof sendSystemTelemetry === "function") sendSystemTelemetry("WARNING", "[MOMA] Sensor de sueño inalcanzable. Falsificación matemática bloqueada.");
+    if (!hasRhr && typeof sendSystemTelemetry === "function") sendSystemTelemetry("WARNING", "[MOMA] Sensor PPG inalcanzable. Falsificación matemática bloqueada.");
 
-    // Inyección honesta: Si no hay dato, se declara offline para que el clúster deduzca.
+    // Inyección honesta: Si el dato existe se preserva el número real; si no, se declara offline
     const payload = recordProvenance(
       {
-        raw_rhr: isRHROffline ? "SENSOR_OFFLINE" : rhr,
-        raw_sleep: isSleepOffline ? "SENSOR_OFFLINE" : sleep,
-        raw_steps: steps
+        raw_rhr: hasRhr ? Number(rhr) : "SENSOR_OFFLINE",
+        raw_sleep: hasSleep ? Number(sleep) : "SENSOR_OFFLINE",
+        raw_steps: hasSteps ? Number(steps) : "SENSOR_OFFLINE"
       },
       "TicWatch_FitAPI",
       false
@@ -45,12 +46,23 @@ function compileBiometricTelemetry(rhr, sleep, steps) {
 
     const prompt = `Eres el Agente Compilador Biométrico de BioOS v5.0.
 REGLA SRE DE HIERRO: ESTÁ ESTRICTAMENTE PROHIBIDO INVENTAR NÚMEROS.
-Si un parámetro llega como "SENSOR_OFFLINE", no lo adivines. Tu tarea es aplicar alineación ortogonal a la telemetría disponible. Si hay ceguera sensorial, debes emitir un token fisiológico que diga explícitamente "[DATO_FALTANTE] Requiere contexto cualitativo o feedback del usuario".
+Si los datos biométricos están presentes como números válidos, debes cuantizarlos fielmente en tokens fisiológicos preservando los valores numéricos exactos (RHR bpm, sueño, pasos).
+Si un parámetro llega como "SENSOR_OFFLINE", no lo adivines. Tu tarea es aplicar alineación ortogonal a la telemetría disponible. Si hay ceguera sensorial (falta RHR o Sueño), debes marcar alerta_ceguera_sensorial = true y emitir un token fisiológico que diga explícitamente "[DATO_FALTANTE] Requiere contexto cualitativo o feedback del usuario".
 Calcula el vector_carga_snc únicamente en base a los datos que sí posees.`;
 
     const compiledData = invokeUniversalLLM(prompt, payload, schema, 0.1);
+    if (compiledData && typeof compiledData === 'object') {
+      compiledData.raw_metrics = {
+        rhr: hasRhr ? Number(rhr) : null,
+        sleep: hasSleep ? Number(sleep) : null,
+        steps: hasSteps ? Number(steps) : null
+      };
+      if (!hasRhr || !hasSleep) {
+        compiledData.alerta_ceguera_sensorial = true;
+      }
+    }
 
-    if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("SUCCESS", `Alineación biométrica completada. Ceguera Sensorial Activa: ${compiledData.alerta_ceguera_sensorial}`);
+    if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("SUCCESS", `Alineación biométrica completada. Ceguera Sensorial Activa: ${compiledData && compiledData.alerta_ceguera_sensorial}`);
     return compiledData;
   });
 }
@@ -60,17 +72,22 @@ function compileQualitativeFeedback(rawInput) {
     if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("PROCESS", "Compilador MOMA: Extrayendo subespacios cualitativos y prospectivos...");
 
     let isVoice = false;
+    let isPhoto = false;
     let rawText = rawInput;
     let ingressItems = [];
 
-    // Typed ingress supports mixed text/voice batches while retaining the
-    // former single-voice envelope for backwards compatibility.
     try {
-      const parsed = JSON.parse(rawInput);
+      const parsed = typeof rawInput === 'object' ? rawInput : JSON.parse(rawInput);
       if (parsed._type === "multimodal_voice" && parsed.data) {
         ingressItems = [{ kind: "voice", mimeType: parsed.mimeType || "audio/ogg", data: parsed.data, eventId: parsed.eventId || "legacy" }];
+      } else if (parsed._type === "multimodal_photo" && parsed.data) {
+        ingressItems = [{ kind: "photo", mimeType: parsed.mimeType || "image/jpeg", data: parsed.data, caption: parsed.caption || "", eventId: parsed.eventId || "legacy" }];
       } else if (parsed._type === "bioos_ingress_batch" && Array.isArray(parsed.items)) {
         ingressItems = parsed.items.slice(0, 10);
+      } else if (Array.isArray(parsed)) {
+        ingressItems = parsed.slice(0, 10);
+      } else if (parsed.kind === "voice" || parsed.kind === "photo") {
+        ingressItems = [parsed];
       }
     } catch (e) {
       ingressItems = [];
@@ -84,19 +101,23 @@ function compileQualitativeFeedback(rawInput) {
         "adherencia_nutricional": {
           "type": "ARRAY",
           "items": { "type": "STRING" },
-          "description": "Lista detallada de ingestas (ej. Pizza, Pera, Tamales, Cerveza)."
+          "description": "Lista detallada de alimentos ingeridos, estimación calórica y desglose de macronutrientes (Proteínas, Carbos, Grasas)."
         },
         "intenciones_futuras": {
           "type": "ARRAY",
           "items": { "type": "STRING" },
-          "description": "Planes operativos del usuario (ej. 'Correr a las 4 AM', 'Descansar rodilla')."
+          "description": "Planes operativos o compromisos del usuario para inyectar en Google Tasks."
         }
       },
       "required": ["sintomatologia_fisica", "carga_alostatica_percibida", "adherencia_nutricional", "intenciones_futuras"]
     };
 
-    const prompt = `Eres el Agente Compilador Multimodal de BioOS v5.0.
-Extrae EXCLUSIVAMENTE vectores de estado biológico, psicológico y nutricional estructurados. Presta máxima atención a "adherencia_nutricional" e "intenciones_futuras" para dotar al clúster de memoria prospectiva y contexto metabólico.`;
+    const prompt = `Eres el Agente Compilador Multimodal de BioOS v5.2 (Audio, Imagen, Texto).
+Analiza las entradas (notas de voz, fotos de alimentos, texto) y extrae:
+1. "sintomatologia_fisica": Molestias musculares, articulares o fatiga.
+2. "carga_alostatica_percibida": Nivel de estrés mental o cognitivo.
+3. "adherencia_nutricional": Alimentos detectados en texto o fotografiados, con estimación de calorías y desglose de macros (Proteínas, Carbohidratos, Grasas).
+4. "intenciones_futuras": Compromisos, tareas a realizar o sesiones de running planeadas.`;
 
     let userPayloadParam;
 
@@ -109,13 +130,18 @@ Extrae EXCLUSIVAMENTE vectores de estado biológico, psicológico y nutricional 
           const mimeType = typeof item.mimeType === "string" && /^audio\/[a-z0-9.+-]+$/i.test(item.mimeType) ? item.mimeType : "audio/ogg";
           parts.push({ inlineData: { mimeType: mimeType, data: item.data } });
           isVoice = true;
+        } else if (item && item.kind === "photo") {
+          if (typeof item.data !== "string" || !item.data || item.data.length > 12000000) throw new Error("[PHOTO_PAYLOAD_INVALID] Foto ausente o demasiado grande.");
+          parts.push({ inlineData: { mimeType: item.mimeType || "image/jpeg", data: item.data } });
+          if (item.caption) texts.push("Descripción adjunta a la foto: " + item.caption);
+          isPhoto = true;
         } else if (item && item.kind === "text" && typeof item.text === "string" && item.text.trim()) {
           texts.push(item.text.trim());
         }
       });
       const combinedText = texts.join("\n[SIGUIENTE_MENSAJE]: ").substring(0, 100000);
-      if (isVoice) {
-        parts.unshift({ text: "Mensajes de texto asociados:\n" + combinedText + "\nEscucha las notas de voz y extrae únicamente la información cualitativa solicitada." });
+      if (isVoice || isPhoto) {
+        parts.unshift({ text: "Contexto textual:\n" + (combinedText || "Sin texto adicional.") + "\nAnaliza los elementos adjuntos y devuelve el JSON solicitado." });
         userPayloadParam = parts;
       } else {
         userPayloadParam = recordProvenance({ text: combinedText }, "Telegram_Text_Batch", false);
@@ -124,13 +150,15 @@ Extrae EXCLUSIVAMENTE vectores de estado biológico, psicológico y nutricional 
       userPayloadParam = recordProvenance({ text: rawText }, "Telegram_Text", false);
     }
 
-    if (isVoice && typeof sendSystemTelemetry === "function") sendSystemTelemetry("PROCESS", "[MOMA] Procesando inferencia acústica (Voice-to-JSON)...");
+    if ((isVoice || isPhoto) && typeof sendSystemTelemetry === "function") {
+      sendSystemTelemetry("PROCESS", `[MOMA] Procesando inferencia multimodal (${isVoice ? 'Audio ' : ''}${isPhoto ? 'Foto ' : ''})...`);
+    }
 
     const compiledData = invokeUniversalLLM(prompt, userPayloadParam, schema, 0.1);
 
     if (typeof sendSystemTelemetry === "function") {
       const intentionsCount = compiledData.intenciones_futuras ? compiledData.intenciones_futuras.length : 0;
-      sendSystemTelemetry("SUCCESS", `NLP cuantizado (Modo: ${isVoice ? 'Audio' : 'Texto'}). Subespacios prospectivos aislados: ${intentionsCount}`);
+      sendSystemTelemetry("SUCCESS", `NLP cuantizado (Modo: ${isVoice ? 'Audio' : isPhoto ? 'Foto' : 'Texto'}). Subespacios prospectivos: ${intentionsCount}`);
     }
 
     return compiledData;
