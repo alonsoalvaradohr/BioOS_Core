@@ -8,6 +8,8 @@
     "audit": "node scripts/audit-state.mjs",
     "test": "node --test apps-script/qa/*.node.test.js",
     "verify": "npm run check && npm test",
+    "deploy": "npm run verify && node scripts/deploy-gas.mjs",
+    "test:e2e": "node scripts/black-box-test.mjs",
     "clasp:status": "clasp status",
     "clasp:push": "npm run verify && clasp push"
   },
