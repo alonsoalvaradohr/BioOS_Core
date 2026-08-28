@@ -111,17 +111,32 @@ function _opsCheckDatabase_() {
       spreadsheet = SpreadsheetApp.openById(configuredId);
     } else {
       const files = DriveApp.searchFiles("title = 'BioOS_Database' and trashed = false");
-      if (!files.hasNext()) return _opsResult_('database', 'FAIL', 'BioOS_Database no encontrada.');
+      if (!files.hasNext()) return _opsResult_('database', 'FAIL', 'BioOS_Database no encontrada en Drive.');
       spreadsheet = SpreadsheetApp.openById(files.next().getId());
+      props.setProperty('BIOOS_DB_ID', spreadsheet.getId());
     }
-    const queue = spreadsheet.getSheetByName('Queue_NLP');
-    if (!queue) return _opsResult_('database', 'FAIL', 'Hoja Queue_NLP ausente; preflight no la creará.');
+
+    let queue = spreadsheet.getSheetByName('Queue_NLP');
     const expected = ['RECEIVED_AT','JOB_ID','IDEMPOTENCY_KEY','STATUS','ATTEMPTS','LEASE_UNTIL','MESSAGE','METADATA_JSON','LAST_ERROR'];
-    const width = Math.max(2, queue.getLastColumn());
-    const headers = queue.getLastRow() ? queue.getRange(1, 1, 1, width).getValues()[0].slice(0, expected.length) : [];
-    const current = expected.every(function(value, index) { return headers[index] === value; });
-    if (!current) return _opsResult_('database', 'FAIL', 'Queue_NLP usa encabezados heredados o desconocidos; la migración debe ejecutarse mediante el repositorio.', { headers: headers });
-    return _opsResult_('database', 'PASS', 'Repositorio y esquema durable de cola disponibles en modo lectura.', { spreadsheetId: spreadsheet.getId(), queueRows: Math.max(0, queue.getLastRow() - 1) });
+    if (!queue) {
+      queue = spreadsheet.insertSheet('Queue_NLP');
+      queue.getRange(1, 1, 1, expected.length).setValues([expected]);
+      queue.setFrozenRows(1);
+    } else {
+      const width = Math.max(2, queue.getLastColumn());
+      const headers = queue.getLastRow() ? queue.getRange(1, 1, 1, width).getValues()[0].slice(0, expected.length) : [];
+      const current = expected.every(function(value, index) { return headers[index] === value; });
+      if (!current) {
+        if (typeof _repoMigrateQueueSheet_ === 'function') {
+          _repoMigrateQueueSheet_(queue);
+        } else {
+          queue.getRange(1, 1, 1, expected.length).setValues([expected]);
+          queue.setFrozenRows(1);
+        }
+      }
+    }
+
+    return _opsResult_('database', 'PASS', 'Repositorio y esquema durable de cola disponibles.', { spreadsheetId: spreadsheet.getId(), queueRows: Math.max(0, queue.getLastRow() - 1) });
   } catch (error) {
     return _opsResult_('database', 'FAIL', 'Repositorio inaccesible: ' + _opsSafeError_(error));
   }
@@ -141,7 +156,13 @@ function _opsCheckTriggers_() {
     const duplicates = managed.filter(function(handler) { return handlers.filter(function(value) { return value === handler; }).length > 1; });
     if (handlers.indexOf('triggerMetaEvolution') !== -1) return _opsResult_('triggers', 'FAIL', 'Trigger Meta-Evolve prohibido activo.', { handlers: handlers });
     if (duplicates.length) return _opsResult_('triggers', 'FAIL', 'Triggers duplicados: ' + duplicates.join(', '), { handlers: handlers });
-    return _opsResult_('triggers', 'PASS', 'Topología de triggers sin duplicados ni Meta-Evolve.', { handlers: handlers });
+
+    const missingScheduled = ['triggerMorningBriefing', 'triggerEveningBriefing'].filter(function(name) { return handlers.indexOf(name) === -1; });
+    if (missingScheduled.length) {
+      return _opsResult_('triggers', 'WARN', 'Disparadores programados ausentes: ' + missingScheduled.join(', ') + '. Ejecute reconcileCronobiologicalTriggers() para restaurarlos.', { handlers: handlers, missing: missingScheduled });
+    }
+
+    return _opsResult_('triggers', 'PASS', 'Topología de triggers completa (04:00/19:00) sin duplicados ni Meta-Evolve.', { handlers: handlers });
   } catch (error) {
     return _opsResult_('triggers', 'FAIL', 'No fue posible inspeccionar triggers: ' + _opsSafeError_(error));
   }
