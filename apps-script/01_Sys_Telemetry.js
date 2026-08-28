@@ -19,36 +19,326 @@ let _telemetryFlushInProgress = false;
 const _TELEMETRY_SCHEMA_VERSION = '2.0';
 
 /**
+ * Sanitiza texto para compatibilidad estricta con Telegram Bot API (HTML parse_mode).
+ * 
+ * Reglas Telegram Bot API HTML:
+ * 1. Tags permitidos: <b>, <strong>, <i>, <em>, <u>, <ins>, <s>, <strike>, <del>,
+ *    <tg-spoiler>, <span class="tg-spoiler">, <a href="...">, <code>, <pre>,
+ *    <pre><code class="language-...">, <blockquote>, <blockquote expandable>, <tg-emoji id="...">.
+ * 2. Todos los caracteres '<', '>', '&' en texto literal que no formen
+ *    parte de un tag válido se escapan como &lt;, &gt;, &amp;.
+ * 3. Todos los tags abiertos se balancean y cierran automáticamente en orden estricto.
+ * 4. Si el texto supera maxLength, se trunca de forma segura y se cierran los tags abiertos.
+ */
+function _sanitizeTelegramHtml_(rawText, maxLength) {
+  if (rawText === undefined || rawText === null || rawText === '') return '';
+  var text = String(rawText);
+  var maxLen = (typeof maxLength === 'number' && maxLength > 0) ? maxLength : 4000;
+
+  // 1. Normalizar saltos de línea y etiquetas de bloque comunes no soportadas por Telegram
+  text = text
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|h[1-6])>/gi, '\n')
+    .replace(/<(p|div|tr|h[1-6])(?:\s+[^>]*)?>/gi, '\n')
+    .replace(/<\/?(table|thead|tbody)[^>]*>/gi, '\n')
+    .replace(/<\/?(td|th)[^>]*>/gi, ' ')
+    .replace(/<\/?li[^>]*>/gi, '\n• ')
+    .replace(/<\/?(ul|ol)[^>]*>/gi, '\n')
+    .replace(/<\/?hr\s*\/?>/gi, '\n---\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (!text) return '';
+
+  // 2. Tokenizador: divide en (a) tags HTML potenciales, (b) entidades HTML válidas ya existentes, (c) texto literal
+  var tokenRegex = /(<(?:\/?[a-zA-Z0-9_-]+(?:\s+[^<>]*)?|\!--[\s\S]*?--)\s*>|&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g;
+
+  var tokens = [];
+  var lastIndex = 0;
+  var match;
+
+  while ((match = tokenRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      tokens.push({ type: 'text', value: text.substring(lastIndex, match.index) });
+    }
+    if (match[0].startsWith('&')) {
+      tokens.push({ type: 'entity', value: match[0] });
+    } else {
+      tokens.push({ type: 'tag', value: match[0] });
+    }
+    lastIndex = tokenRegex.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    tokens.push({ type: 'text', value: text.substring(lastIndex) });
+  }
+
+  // 3. Parser, Validador de Tags y Árbol de Anidación (Tag Balancer)
+  var openStack = [];
+  var out = '';
+  var truncated = false;
+
+  function appendLiteral(str) {
+    if (!str || truncated) return;
+    var escaped = str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    if (out.length + escaped.length > maxLen - 20) {
+      var available = Math.max(0, maxLen - 20 - out.length);
+      out += escaped.substring(0, available);
+      truncated = true;
+    } else {
+      out += escaped;
+    }
+  }
+
+  function appendRaw(str) {
+    if (!str || truncated) return;
+    if (out.length + str.length > maxLen - 20) {
+      var available = Math.max(0, maxLen - 20 - out.length);
+      out += str.substring(0, available);
+      truncated = true;
+    } else {
+      out += str;
+    }
+  }
+
+  for (var i = 0; i < tokens.length; i++) {
+    if (truncated) break;
+    var t = tokens[i];
+
+    if (t.type === 'text') {
+      appendLiteral(t.value);
+    } else if (t.type === 'entity') {
+      appendRaw(t.value);
+    } else if (t.type === 'tag') {
+      var tagStr = t.value;
+      var parsed = tagStr.match(/^<\s*(\/)?\s*([a-zA-Z0-9_-]+)([\s\S]*?)>$/);
+      if (!parsed) {
+        appendLiteral(tagStr);
+        continue;
+      }
+
+      var isClosing = !!parsed[1];
+      var rawName = parsed[2].toLowerCase();
+      var attrs = (parsed[3] || '').trim();
+
+      var canonicalTag = rawName;
+      if (rawName === 'strong') canonicalTag = 'b';
+      else if (rawName === 'em') canonicalTag = 'i';
+      else if (rawName === 'ins') canonicalTag = 'u';
+      else if (rawName === 'strike' || rawName === 'del') canonicalTag = 's';
+
+      var isAllowed = (
+        canonicalTag === 'b' ||
+        canonicalTag === 'i' ||
+        canonicalTag === 'u' ||
+        canonicalTag === 's' ||
+        canonicalTag === 'code' ||
+        canonicalTag === 'pre' ||
+        canonicalTag === 'tg-spoiler' ||
+        canonicalTag === 'span' ||
+        canonicalTag === 'a' ||
+        canonicalTag === 'blockquote' ||
+        canonicalTag === 'tg-emoji'
+      );
+
+      if (!isAllowed) {
+        appendLiteral(tagStr);
+        continue;
+      }
+
+      if (isClosing) {
+        var matchIdx = -1;
+        for (var s = openStack.length - 1; s >= 0; s--) {
+          if (openStack[s].name === canonicalTag || (canonicalTag === 'span' && openStack[s].name === 'span')) {
+            matchIdx = s;
+            break;
+          }
+        }
+
+        if (matchIdx !== -1) {
+          while (openStack.length > matchIdx) {
+            var closedTag = openStack.pop();
+            appendRaw(closedTag.closeTag);
+          }
+        }
+      } else {
+        if (canonicalTag === 'a') {
+          var hrefMatch = attrs.match(/href\s*=\s*(?:["']([^"']*)["']|([^\s>]+))/i);
+          var rawHref = hrefMatch ? (hrefMatch[1] || hrefMatch[2]) : '';
+          if (rawHref) {
+            var cleanHref = rawHref
+              .replace(/&amp;/g, '&')
+              .replace(/&/g, '&amp;')
+              .replace(/"/g, '&quot;')
+              .replace(/</g, '%3C')
+              .replace(/>/g, '%3E');
+            appendRaw('<a href="' + cleanHref + '">');
+            openStack.push({ name: 'a', closeTag: '</a>' });
+          } else {
+            appendLiteral(tagStr);
+          }
+        } else if (canonicalTag === 'span') {
+          if (/\bclass\s*=\s*["']?tg-spoiler["']?/i.test(attrs)) {
+            appendRaw('<span class="tg-spoiler">');
+            openStack.push({ name: 'span', closeTag: '</span>' });
+          } else {
+            appendLiteral(tagStr);
+          }
+        } else if (canonicalTag === 'tg-emoji') {
+          var idMatch = attrs.match(/id\s*=\s*["']?(\d+)["']?/i);
+          if (idMatch && idMatch[1]) {
+            appendRaw('<tg-emoji id="' + idMatch[1] + '">');
+            openStack.push({ name: 'tg-emoji', closeTag: '</tg-emoji>' });
+          } else {
+            appendLiteral(tagStr);
+          }
+        } else if (canonicalTag === 'code') {
+          var langMatch = attrs.match(/class\s*=\s*["']?language-([a-zA-Z0-9_-]+)["']?/i);
+          if (langMatch && langMatch[1]) {
+            appendRaw('<code class="language-' + langMatch[1] + '">');
+          } else {
+            appendRaw('<code>');
+          }
+          openStack.push({ name: 'code', closeTag: '</code>' });
+        } else if (canonicalTag === 'pre') {
+          var preLangMatch = attrs.match(/class\s*=\s*["']?language-([a-zA-Z0-9_-]+)["']?/i);
+          if (preLangMatch && preLangMatch[1]) {
+            appendRaw('<pre><code class="language-' + preLangMatch[1] + '">');
+            openStack.push({ name: 'pre', closeTag: '</code></pre>' });
+          } else {
+            appendRaw('<pre>');
+            openStack.push({ name: 'pre', closeTag: '</pre>' });
+          }
+        } else if (canonicalTag === 'blockquote') {
+          if (/\bexpandable\b/i.test(attrs)) {
+            appendRaw('<blockquote expandable>');
+          } else {
+            appendRaw('<blockquote>');
+          }
+          openStack.push({ name: 'blockquote', closeTag: '</blockquote>' });
+        } else {
+          appendRaw('<' + canonicalTag + '>');
+          openStack.push({ name: canonicalTag, closeTag: '</' + canonicalTag + '>' });
+        }
+      }
+    }
+  }
+
+  if (truncated) {
+    out = out.trim() + '\n\n[...]';
+  }
+
+  while (openStack.length > 0) {
+    var remainingTag = openStack.pop();
+    out += remainingTag.closeTag;
+  }
+
+  return out;
+}
+
+/**
  * Canal de salida exclusivo para la síntesis humana final (Silenciamiento SRE).
+ * Incluye sanitización HTML, reintentos con backoff exponencial, fallback a texto plano y telemetría de códigos HTTP.
  * Nunca debe ser llamado por sendSystemTelemetry.
  */
 function _rawSystemNotify(text, targetChatId) {
   try {
     const props = PropertiesService.getScriptProperties();
     const token = props.getProperty("TELEGRAM_BOT_TOKEN");
-    const chatId = targetChatId === undefined || targetChatId === null || targetChatId === ''
+    const chatId = (targetChatId === undefined || targetChatId === null || targetChatId === '')
       ? props.getProperty("TELEGRAM_CHAT_ID") : String(targetChatId);
 
     if (!token || !chatId) {
-      console.error("[SYS_PANIC] Credenciales de Telegram ausentes en PropertiesService.");
-      return;
+      console.error("[SYS_PANIC] Credenciales de Telegram ausentes en PropertiesService (TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID).");
+      return false;
+    }
+
+    let sanitizedText = _sanitizeTelegramHtml_(text, 4000);
+
+    if (!sanitizedText) {
+      console.warn("[TELEGRAM_WARN] Intento de enviar mensaje vacío a Telegram.");
+      return false;
     }
 
     const url = `https://api.telegram.org/bot${token}/sendMessage`;
-    const options = {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify({ chat_id: chatId, text: text, parse_mode: "HTML" }),
-      muteHttpExceptions: true
-    };
+    const maxRetries = 3;
+    let delayMs = 1000;
+    let lastError = null;
 
-    const response = UrlFetchApp.fetch(url, options);
-    if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
-      throw new Error('[TELEGRAM_SEND_FAILED] HTTP ' + response.getResponseCode());
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const payload = {
+          chat_id: chatId,
+          text: sanitizedText,
+          parse_mode: "HTML"
+        };
+
+        const response = UrlFetchApp.fetch(url, {
+          method: "post",
+          contentType: "application/json",
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        });
+
+        const code = response.getResponseCode();
+        const contentText = response.getContentText();
+
+        if (code >= 200 && code < 300) {
+          return true;
+        }
+
+        // Si Telegram rechaza por parseo de HTML (HTTP 400), fallback inmediato a texto plano sin tags
+        if (code === 400 && (contentText.includes("can't parse entities") || contentText.includes("entity") || contentText.includes("tag") || contentText.includes("bad request"))) {
+          console.warn(`[TELEGRAM_HTML_RETRY] Fallo de parseo HTML (HTTP 400). Reintentando en texto plano sin formato...`);
+          const plainText = String(text || '').replace(/<[^>]+>/g, '').trim();
+          const fallbackResponse = UrlFetchApp.fetch(url, {
+            method: "post",
+            contentType: "application/json",
+            payload: JSON.stringify({ chat_id: chatId, text: plainText.substring(0, 4000) }),
+            muteHttpExceptions: true
+          });
+
+          const fallbackCode = fallbackResponse.getResponseCode();
+          if (fallbackCode >= 200 && fallbackCode < 300) {
+            console.log("[TELEGRAM_SUCCESS] Mensaje entregado exitosamente mediante fallback de texto plano.");
+            return true;
+          } else {
+            console.error(`[TELEGRAM_FALLBACK_ERR] Fallback texto plano falló con HTTP ${fallbackCode}: ${fallbackResponse.getContentText()}`);
+          }
+        }
+
+        lastError = new Error(`HTTP ${code}: ${contentText}`);
+
+        // Reintentar en casos de Rate Limit (429) o errores de servidor (5xx)
+        if (code === 429 || code >= 500) {
+          console.warn(`[TELEGRAM_RETRY] Intento ${attempt}/${maxRetries} falló con HTTP ${code}. Esperando ${delayMs}ms...`);
+          Utilities.sleep(delayMs);
+          delayMs *= 2;
+          continue;
+        }
+
+        console.error(`[TELEGRAM_FAULT] Error no recuperable de Telegram (HTTP ${code}): ${contentText}`);
+        break;
+
+      } catch (netError) {
+        lastError = netError;
+        console.warn(`[TELEGRAM_NET_WARN] Error de red en intento ${attempt}/${maxRetries}: ${netError.message}`);
+        if (attempt < maxRetries) {
+          Utilities.sleep(delayMs);
+          delayMs *= 2;
+        }
+      }
     }
-    return true;
+
+    console.error(`[TELEMETRY_FAULT] Falla crítica definitiva en canal de notificaciones Telegram: ${lastError ? lastError.message : 'Error desconocido'}`);
+    return false;
   } catch (error) {
-    console.error(`[TELEMETRY_FAULT] Falla crítica en canal de notificaciones: ${error.message}`);
+    console.error(`[TELEMETRY_FAULT] Falla inesperada en _rawSystemNotify: ${error.message}`);
     return false;
   }
 }
@@ -185,10 +475,10 @@ function recordProvenance(dataPayload, sourceId, isInferred = false) {
  * MOTOR DE RESILIENCIA Y ENRUTAMIENTO SRE (Kernel Wrapper)
  * ==============================================================================
  */
-function executeWithResilience(taskName, taskFunction, maxRetries = BIOOS_CONFIG.RESILIENCE.MAX_RETRIES) {
+function executeWithResilience(taskName, taskFunction, maxRetries = (typeof BIOOS_CONFIG !== 'undefined' && BIOOS_CONFIG && BIOOS_CONFIG.RESILIENCE ? BIOOS_CONFIG.RESILIENCE.MAX_RETRIES : 3)) {
   _executionDepth++;
   let attempt = 0;
-  let delayMs = BIOOS_CONFIG.RESILIENCE.BACKOFF_BASE_MS;
+  let delayMs = (typeof BIOOS_CONFIG !== 'undefined' && BIOOS_CONFIG && BIOOS_CONFIG.RESILIENCE ? BIOOS_CONFIG.RESILIENCE.BACKOFF_BASE_MS : 2000);
 
   try {
     while (attempt < maxRetries) {
@@ -219,7 +509,9 @@ function executeWithResilience(taskName, taskFunction, maxRetries = BIOOS_CONFIG
         if (attempt >= maxRetries) {
           sendSystemTelemetry("FATAL", `Colapso definitivo en: ${taskName}. Excepción: ${error.message}`);
 
-          if (BIOOS_CONFIG.SYS_FLAGS.ENABLE_AUTO_REPAIR && !isInfraDown) {
+          const isInternalTask = taskName.startsWith("Mem_") || taskName.startsWith("SRE_") || taskName.startsWith("Install_") || taskName.startsWith("Reconcile_") || taskName.startsWith("Orchestrator_");
+          const autoRepair = (typeof BIOOS_CONFIG !== 'undefined' && BIOOS_CONFIG && BIOOS_CONFIG.SYS_FLAGS && BIOOS_CONFIG.SYS_FLAGS.ENABLE_AUTO_REPAIR);
+          if (autoRepair && !isInfraDown && _executionDepth <= 1 && !isInternalTask) {
              sendSystemTelemetry("SRE", `Despertando Agente SRE para evaluar: ${taskName}`);
              try {
                if (typeof analyzeAndPatchRootCause === "function") {

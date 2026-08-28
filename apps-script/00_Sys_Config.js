@@ -17,8 +17,8 @@ function _deepFreeze_(value) {
 }
 
 const BIOOS_CONFIG = _deepFreeze_({
-  VERSION: "5.1.0",
-  RELEASE_CHANNEL: "stable",
+  VERSION: "8.5.0-PROD-LIVE",
+  RELEASE_CHANNEL: "production",
 
   // Capabilities are source-controlled and fail closed. Enabling one may also
   // require adding its OAuth scope back to appsscript.json and redeploying.

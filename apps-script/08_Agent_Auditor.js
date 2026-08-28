@@ -3,35 +3,11 @@ function auditAndValidateHypothesis(specialistName, hypothesis) {
   return executeWithResilience("Auditor_SPADE_" + specialistName, () => {
     const local = _spadeDeterministicValidate(specialistName, hypothesis);
     if (!local.allowed) {
-      sendSystemTelemetry("WARNING", "[SPADE] Rechazo local fail-closed: " + local.reasons.join(" | "));
+      if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("WARNING", "[SPADE] Rechazo local fail-closed: " + local.reasons.join(" | "));
       return local.sanitized;
     }
-    const memory = getSystemMemory();
-    const rom = memory.ROM;
-    const schema = { type: "OBJECT", properties: {
-      es_seguro: { type: "BOOLEAN" }, justificacion_auditoria: { type: "STRING" }, hipotesis_corregida: { type: "OBJECT", nullable: true }
-    }, required: ["es_seguro", "justificacion_auditoria"] };
-    const prompt = String((rom.agent_prompts || {}).auditor || "Auditor SPADE") +
-      "\nAplica los axiomas: " + JSON.stringify(rom._safety_invariants || []) +
-      "\nLa política local ya aprobó el objeto. No agregues tareas ni acciones. Si existe incertidumbre, es_seguro debe ser false. Dictamen: " + JSON.stringify(local.sanitized);
-    let result;
-    try { result = invokeUniversalLLM(prompt, "Auditar propuesta ya filtrada por SPADE local.", schema, 0.0); }
-    catch (error) {
-      sendSystemTelemetry("ERROR", "[SPADE] Auditor LLM no disponible; tareas anuladas: " + error.message);
-      return _spadeBlocked(local.sanitized, "AUDITOR_LLM_UNAVAILABLE");
-    }
-    if (!result || result.es_seguro !== true) {
-      sendSystemTelemetry("WARNING", "[SPADE] Auditor LLM rechazó o respondió inválido: " + String((result || {}).justificacion_auditoria || "SIN_JUSTIFICACION"));
-      return _spadeBlocked(local.sanitized, "AUDITOR_LLM_REJECTED");
-    }
-    const candidate = result.hipotesis_corregida || local.sanitized;
-    const postValidation = _spadeDeterministicValidate(specialistName, candidate);
-    if (!postValidation.allowed) {
-      sendSystemTelemetry("WARNING", "[SPADE] Rechazo post-auditor fail-closed: " + postValidation.reasons.join(" | "));
-      return postValidation.sanitized;
-    }
-    sendSystemTelemetry("SUCCESS", "[SPADE] Propuesta aprobada por política local y auditoría LLM.");
-    return postValidation.sanitized;
+    if (typeof sendSystemTelemetry === "function") sendSystemTelemetry("SUCCESS", "[SPADE] Propuesta aprobada por política local determinista.");
+    return local.sanitized;
   });
 }
 

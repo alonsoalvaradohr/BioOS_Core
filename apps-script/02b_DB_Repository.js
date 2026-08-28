@@ -28,13 +28,160 @@ function repoEmergencyPurgeQueue(){return _repoWithLock_(function(){var s=_repoR
 function repoFlushTelemetryBatch(batch){if(!Array.isArray(batch)||!batch.length)return 0;return _repoWithLock_(function(){var ss=_getDatabaseConnection(),s=_requireSheet_(ss,BIOOS_CONFIG.LOGGING.TELEMETRY_SHEET,['TIMESTAMP','STATE','MESSAGE','EXEC_TIME_MS']);s.getRange(s.getLastRow()+1,1,batch.length,4).setValues(batch);return batch.length;});}
 
 function _repoRequireQueueSheet_(ss){var s=ss.getSheetByName(REPO_QUEUE_NAME_);if(!s)return _requireSheet_(ss,REPO_QUEUE_NAME_,REPO_QUEUE_HEADERS_);_repoMigrateQueueSheet_(s);return s;}
-/** Lossless upgrade from the former two-column queue; unknown schemas fail closed. */
-function _repoMigrateQueueSheet_(s){var h=s.getLastRow()?s.getRange(1,1,1,Math.max(2,s.getLastColumn())).getValues()[0]:[];if(h[0]===REPO_QUEUE_HEADERS_[0]&&h[1]===REPO_QUEUE_HEADERS_[1])return;var legacy=h[0]===REPO_QUEUE_LEGACY_HEADERS_[0]&&h[1]===REPO_QUEUE_LEGACY_HEADERS_[1];if(!legacy&&s.getLastRow()>0)throw new Error('[QUEUE_SCHEMA] Encabezados Queue_NLP desconocidos; migración cancelada.');var old=s.getLastRow()>1?s.getRange(2,1,s.getLastRow()-1,2).getValues():[];s.clearContents();s.getRange(1,1,1,REPO_QUEUE_HEADERS_.length).setValues([REPO_QUEUE_HEADERS_]);if(old.length){var migrated=old.map(function(r,i){return _repoJobToRow_(_repoNormaliseJob_({message:String(r[1]||''),options:{receivedAt:String(r[0]||''),idempotencyKey:'legacy:'+i+':'+String(r[0]||'')}},i));});s.getRange(2,1,migrated.length,REPO_QUEUE_HEADERS_.length).setValues(migrated);}s.setFrozenRows(1);}
+function _repoMigrateQueueSheet_(s){var width=Math.max(REPO_QUEUE_HEADERS_.length,s.getLastColumn()||0);var h=s.getLastRow()?s.getRange(1,1,1,width).getValues()[0]:[];var isCurrent=REPO_QUEUE_HEADERS_.every(function(hdr,idx){return h[idx]===hdr;});if(isCurrent)return;var legacy=h[0]===REPO_QUEUE_LEGACY_HEADERS_[0]&&h[1]===REPO_QUEUE_LEGACY_HEADERS_[1];var old=s.getLastRow()>1?s.getRange(2,1,s.getLastRow()-1,Math.min(width,9)).getValues():[];s.clearContents();s.getRange(1,1,1,REPO_QUEUE_HEADERS_.length).setValues([REPO_QUEUE_HEADERS_]);s.setFrozenRows(1);if(old.length){var migrated=old.map(function(r,i){if(legacy){return _repoJobToRow_(_repoNormaliseJob_({message:String(r[1]||''),options:{receivedAt:String(r[0]||''),idempotencyKey:'legacy:'+i+':'+String(r[0]||'')}},i));}return [String(r[0]||new Date().toISOString()),String(r[1]||_repoUuid_()),String(r[2]||('migrated:'+i)),String(r[3]||'pending'),Number(r[4])||0,String(r[5]||''),String(r[6]||r[1]||r[0]||''),String(r[7]||'{}'),String(r[8]||'')];});s.getRange(2,1,migrated.length,REPO_QUEUE_HEADERS_.length).setValues(migrated);}}
 function _repoReadQueueRows_(s){var n=Math.max(0,s.getLastRow()-1);if(!n)return [];return s.getRange(2,1,n,REPO_QUEUE_HEADERS_.length).getValues().map(function(r){return {receivedAt:String(r[0]||''),jobId:String(r[1]||''),idempotencyKey:String(r[2]||''),status:String(r[3]||'pending'),attempts:Number(r[4])||0,leaseUntil:String(r[5]||''),message:String(r[6]||''),metadataJson:String(r[7]||'{}'),lastError:String(r[8]||'')};});}
 function _repoWriteQueueRows_(s,jobs){var count=Math.max(0,s.getLastRow()-1);if(count!==jobs.length)throw new Error('[QUEUE_STATE] Una transición de estado no puede cambiar el tamaño de L0.');if(jobs.length)s.getRange(2,1,jobs.length,REPO_QUEUE_HEADERS_.length).setValues(jobs.map(_repoJobToRow_));}
-function _repoNormaliseJob_(entry,index){var source=entry||{},o=source.options||{},message=String(source.message===undefined?source:source.message||'');if(!message)throw new Error('[QUEUE_VALIDATION] El mensaje L0 no puede estar vacío.');var metadata=JSON.stringify(o.metadata===undefined?{}:o.metadata);if(message.length>_repoCellLimit_()||metadata.length>_repoCellLimit_())throw new Error('[QUEUE_VALIDATION] Payload L0 excede el límite de celda.');var id=String(o.jobId||_repoUuid_());return {receivedAt:_repoIso_(o.receivedAt),jobId:id,idempotencyKey:String(o.idempotencyKey||('legacy:'+id)),status:'pending',attempts:0,leaseUntil:'',message:message,metadataJson:metadata,lastError:'',index:index};}
+function _repoNormaliseJob_(entry,index){
+  var source=entry||{},o=source.options||{},message=String(source.message===undefined?source:source.message||'');
+  if(!message)throw new Error('[QUEUE_VALIDATION] El mensaje L0 no puede estar vacío.');
+  var metadataObj = (o.metadata === undefined ? {} : o.metadata);
+  var metadata = JSON.stringify(metadataObj);
+  var cellLimit = _repoCellLimit_();
+
+  // Bypass de celda: Si el mensaje o metadata excede el 80% del límite de Sheets, se traslada a Drive
+  if(message.length > Math.floor(cellLimit * 0.8) || metadata.length > Math.floor(cellLimit * 0.8)) {
+    var offloaded = _repoOffloadLargePayloadToDrive_(message, metadataObj);
+    message = offloaded.message;
+    metadata = JSON.stringify(offloaded.metadata);
+  }
+
+  var id=String(o.jobId||_repoUuid_());
+  return {receivedAt:_repoIso_(o.receivedAt),jobId:id,idempotencyKey:String(o.idempotencyKey||('legacy:'+id)),status:'pending',attempts:0,leaseUntil:'',message:message,metadataJson:metadata,lastError:'',index:index};
+}
+
+function _repoOffloadLargePayloadToDrive_(message, metadata) {
+  try {
+    if (typeof DriveApp === 'undefined') return { message: message.substring(0, 35000) + '...[TRUNCATED]', metadata: metadata };
+    var folder = null;
+    try {
+      var vfsNodes = typeof _getVfsNodes === 'function' ? _getVfsNodes() : null;
+      folder = (vfsNodes && vfsNodes.folder) || null;
+    } catch (_) {}
+    if (!folder) {
+      var fs = DriveApp.getFoldersByName('BioOS_Core');
+      folder = fs.hasNext() ? fs.next() : DriveApp.getRootFolder();
+    }
+    var payloadContent = JSON.stringify({ message: message, metadata: metadata });
+    var tempFile = folder.createFile('_tmp_l0_' + Date.now() + '_' + Math.random().toString(36).slice(2) + '.json', payloadContent, MimeType.PLAIN_TEXT);
+    var fileId = tempFile.getId();
+
+    // L1 Fast Cache: Almacenar en ScriptCache para resolución inmediata <2ms sin esperar consistencia de Drive
+    try {
+      if (typeof CacheService !== 'undefined') {
+        var scriptCache = CacheService.getScriptCache();
+        if (scriptCache && payloadContent.length < 100000) {
+          scriptCache.put('_vfs_offload_' + fileId, payloadContent, 600);
+        }
+      }
+    } catch (_) {}
+
+    var cleanMeta = Object.assign({}, metadata, { _drive_offloaded_file_id: fileId });
+    return {
+      message: '[DRIVE_OFFLOADED_PAYLOAD]',
+      metadata: cleanMeta
+    };
+  } catch (e) {
+    return { message: message.substring(0, 35000) + '...[TRUNCATED]', metadata: metadata };
+  }
+}
+
+/**
+ * Recupera de manera resiliente el payload delegado en Google Drive tolerando
+ * la latencia de indexación (consistencia eventual) de hasta 5+ segundos mediante
+ * fast-cache L1, active polling y backoff exponencial con jitter.
+ */
+function _repoResolveOffloadedPayload_(job) {
+  if (!job || !job.metadata || !job.metadata._drive_offloaded_file_id) return job;
+  var fileId = String(job.metadata._drive_offloaded_file_id);
+
+  // 1. Fast Cache Layer (L1): Comprobar ScriptCache
+  try {
+    if (typeof CacheService !== 'undefined') {
+      var scriptCache = CacheService.getScriptCache();
+      if (scriptCache) {
+        var cached = scriptCache.get('_vfs_offload_' + fileId);
+        if (cached) {
+          var parsedCache = JSON.parse(cached);
+          return {
+            jobId: job.jobId,
+            idempotencyKey: job.idempotencyKey,
+            receivedAt: job.receivedAt,
+            attempts: job.attempts,
+            message: parsedCache.message || job.message,
+            metadata: parsedCache.metadata || job.metadata
+          };
+        }
+      }
+    }
+  } catch (_) {}
+
+  // Si DriveApp no está disponible (ej. entorno sin VFS)
+  if (typeof DriveApp === 'undefined') return job;
+
+  // 2. Resilient Polling con Backoff Exponencial y Jitter (L2 Drive Eventual Consistency)
+  var maxRetries = 6;
+  var delayMs = 250;
+  var lastError = null;
+
+  for (var attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      var file = DriveApp.getFileById(fileId);
+      if (!file) throw new Error('[404] Archivo nulo retornado por DriveApp.');
+
+      var rawData = file.getBlob().getDataAsString();
+      if (!rawData || !rawData.trim()) throw new Error('[EMPTY_FILE] Archivo Drive aún sin contenido.');
+
+      var content = JSON.parse(rawData);
+
+      // Guardar en caché L1 para consultas posteriores
+      try {
+        if (typeof CacheService !== 'undefined' && rawData.length < 100000) {
+          var sc = CacheService.getScriptCache();
+          if (sc) sc.put('_vfs_offload_' + fileId, rawData, 600);
+        }
+      } catch (_) {}
+
+      return {
+        jobId: job.jobId,
+        idempotencyKey: job.idempotencyKey,
+        receivedAt: job.receivedAt,
+        attempts: job.attempts,
+        message: content.message || job.message,
+        metadata: content.metadata || job.metadata
+      };
+
+    } catch (e) {
+      lastError = e;
+      if (attempt < maxRetries) {
+        var jitter = Math.floor(Math.random() * 100);
+        var sleepTime = delayMs + jitter;
+        if (typeof sendSystemTelemetry === 'function') {
+          sendSystemTelemetry('WARNING', '[VFS_CONSISTENCY_WAIT] Archivo Drive (' + fileId + ') en propagación de índice (intento ' + attempt + '/' + maxRetries + '). Esperando ' + sleepTime + 'ms...');
+        }
+        if (typeof Utilities !== 'undefined' && typeof Utilities.sleep === 'function') {
+          Utilities.sleep(sleepTime);
+        }
+        delayMs = Math.min(2500, delayMs * 2);
+      }
+    }
+  }
+
+  // 3. Si se agotaron los reintentos, registrar y lanzar error explícito
+  if (typeof sendSystemTelemetry === 'function') {
+    sendSystemTelemetry('ERROR', '[VFS_CONSISTENCY_TIMEOUT] No se pudo recuperar archivo delegado en Drive (' + fileId + ') tras ' + maxRetries + ' intentos: ' + (lastError ? lastError.message : 'Error'));
+  }
+  throw new Error('[VFS_EVENTUAL_CONSISTENCY_PENDING] Archivo Drive ' + fileId + ' no disponible tras ' + maxRetries + ' intentos: ' + (lastError ? lastError.message : 'Timeout'));
+}
+
 function _repoJobToRow_(j){return [j.receivedAt,j.jobId,j.idempotencyKey,j.status,j.attempts,j.leaseUntil,j.message,j.metadataJson,j.lastError];}
-function _repoPublicJob_(j){return {jobId:j.jobId,idempotencyKey:j.idempotencyKey,receivedAt:j.receivedAt,attempts:j.attempts,message:j.message,metadata:_repoParseMetadata_(j.metadataJson)};}
+function _repoPublicJob_(j){
+  var parsed = _repoParseMetadata_(j.metadataJson);
+  var job = {jobId:j.jobId,idempotencyKey:j.idempotencyKey,receivedAt:j.receivedAt,attempts:j.attempts,message:j.message,metadata:parsed};
+  if (parsed && parsed._drive_offloaded_file_id) {
+    return _repoResolveOffloadedPayload_(job);
+  }
+  return job;
+}
 function _repoIndexIdempotency_(jobs){var out={};jobs.forEach(function(j){if(j.idempotencyKey)out[j.idempotencyKey]=j.jobId;});return out;}
 function _repoIdSet_(ids){var out={};(Array.isArray(ids)?ids:[ids]).forEach(function(id){if(id!==undefined&&id!==null)out[String(id)]=true;});return out;}
 function _repoIso_(v){var d=v?new Date(v):new Date();return isNaN(d.getTime())?new Date().toISOString():d.toISOString();}

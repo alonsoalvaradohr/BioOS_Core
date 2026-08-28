@@ -49,3 +49,133 @@ function rollbackROMFromSnapshot(snapshotId, approvalToken) { _metaRequireApprov
 
 function _applyEvolutionToROM(agentKey, newPrompt, rationale) { var memory = getSystemMemory(), current = ((memory.ROM.agent_prompts || {})[agentKey]); if (!current) throw new Error('[META_FAULT] Agente no mapeado: ' + agentKey); return _storeEvolutionProposal(agentKey, current, { nuevo_system_prompt: newPrompt, cambio_estructural: rationale || 'Solicitud heredada' }, rationale, memory.ROM._version); }
 function installMetaEvolveDaemon() { sendSystemTelemetry('WARNING', '[META-EVOLVE] Daemon bloqueado: las revisiones ROM requieren un operador.'); return { installed: false, reason: 'AUTOMATIC_ROM_EVOLUTION_DISABLED' }; }
+
+/**
+ * BUCLE SEMANAL: Auditoría Mesocíclica & Balance Alostático (Domingos 18:00).
+ */
+function executeWeeklyAudit() {
+  return executeWithResilience("Auditoria_Semanal_Longitudinal", function() {
+    const memory = getSystemMemory();
+    const rom = memory.ROM || {};
+    const nvram = memory.NVRAM || {};
+    const archives = (nvram.L2_Episodic && nvram.L2_Episodic.weekly_archives) || [];
+    const events = (nvram.L1_Working && nvram.L1_Working.session_events) || [];
+    const basal = nvram.L4_Basal || { baseline_rhr: 43, target_steps: 8000 };
+    const deltas = (nvram.L3_Semantic && nvram.L3_Semantic.calibration_deltas) || [];
+
+    const schema = {
+      type: "OBJECT",
+      properties: {
+        mensaje_telegram: { type: "STRING", description: "Reporte Táctico Dominical formateado en HTML para Telegram." },
+        resumen_ejecutivo: { type: "STRING" },
+        adaptacion_gemelo_digital: { type: "OBJECT", properties: { acwr: { type: "NUMBER" }, rhr_trend: { type: "STRING" }, volumen_km_semana: { type: "NUMBER" } }, required: ["acwr", "rhr_trend", "volumen_km_semana"] },
+        ajuste_microciclo_siguiente: { type: "STRING" }
+      },
+      required: ["mensaje_telegram", "resumen_ejecutivo", "adaptacion_gemelo_digital", "ajuste_microciclo_siguiente"]
+    };
+
+    const systemPrompt = `Eres el Agente Auditor Longitudinal y Fisiólogo Jefe de BioOS v5.3.
+Tu misión es generar el REPORTE TÁCTICO DOMINICAL (Cierre de Semana) para un Ingeniero de I+D y Corredor de Fondo.
+VETO DE HIERRO: Cero cortesía vacía, cero preguntas retóricas. Lenguaje técnico sobrio y directrices de carga exactas.
+
+ESTRUCTURA OBLIGATORIA DEL REPORTE (formato HTML para Telegram):
+🧬 <b>1. Estado del Gemelo Digital:</b> Adaptación mitocondrial, balance de fatiga y forma (ACWR estimado), tendencia de RHR semanal vs basal (${basal.baseline_rhr || 43} bpm).
+🏃 <b>2. Ajuste de Volumen Microciclo Siguiente:</b> Kilometraje sugerido para la semana entrante, distribución de zonas (Z2 vs Z4) y días de descanso neuromuscular.
+📌 <b>3. Alertas de Compromisos Clave:</b> Hitos de robótica/CAD, entregables y agenda prioritaria para la semana entrante.`;
+
+    const contextPayload = {
+      semana_eventos: events.slice(-10),
+      ultimos_deltas: deltas.slice(-7),
+      parametros_basales: basal,
+      total_archivos_acumulados: archives.length
+    };
+
+    const response = invokeUniversalLLM(systemPrompt, JSON.stringify(contextPayload), schema, 0.2);
+
+    let delivered = false;
+    if (response && response.mensaje_telegram && typeof _rawSystemNotify === "function") {
+      delivered = _rawSystemNotify("📊 <b>BioOS | Reporte Táctico Dominical</b>\n\n" + response.mensaje_telegram);
+    }
+
+    try {
+      mutateNVRAM(function(state) {
+        if (!state.L2_Episodic.weekly_archives) state.L2_Episodic.weekly_archives = [];
+        state.L2_Episodic.weekly_archives.push({
+          timestamp: new Date().toISOString(),
+          type: "WEEKLY_AUDIT_SNAPSHOT",
+          data: response.adaptacion_gemelo_digital || {},
+          summary: response.resumen_ejecutivo || "Auditoría semanal completada."
+        });
+        state.L2_Episodic.weekly_archives = state.L2_Episodic.weekly_archives.slice(-12);
+      }, "Commit_Weekly_Audit");
+    } catch (e) {
+      console.warn("[WEEKLY_AUDIT] No se pudo persistir snapshot en L2:", e.message);
+    }
+
+    return {
+      success: true,
+      delivered: delivered,
+      audit: response
+    };
+  });
+}
+
+/**
+ * BUCLE MENSUAL: Meta-Evolución & Auto-Tuning de Agentes (Día 1 de cada mes).
+ */
+function executeMonthlyMetaEvolution() {
+  return executeWithResilience("Meta_Evolucion_Mensual", function() {
+    const memory = getSystemMemory();
+    const rom = memory.ROM || {};
+    const nvram = memory.NVRAM || {};
+    const archives = (nvram.L2_Episodic && nvram.L2_Episodic.weekly_archives) || [];
+    const deltas = (nvram.L3_Semantic && nvram.L3_Semantic.calibration_deltas) || [];
+    const weights = (nvram.L3_Semantic && nvram.L3_Semantic.evolutionary_weights) || { running_intensity_tolerance: 1.0, recovery_speed_factor: 1.0, task_completion_bias: 1.0 };
+
+    const schema = {
+      type: "OBJECT",
+      properties: {
+        mensaje_telegram: { type: "STRING" },
+        pesos_ajustados: { type: "OBJECT", properties: { running_intensity_tolerance: { type: "NUMBER" }, recovery_speed_factor: { type: "NUMBER" }, task_completion_bias: { type: "NUMBER" } }, required: ["running_intensity_tolerance", "recovery_speed_factor", "task_completion_bias"] },
+        diagnostico_evolutivo: { type: "STRING" },
+        propuesta_mutacion_prompt: { type: "STRING" }
+      },
+      required: ["mensaje_telegram", "pesos_ajustados", "diagnostico_evolutivo"]
+    };
+
+    const systemPrompt = `Eres el Motor de Meta-Evolución Cognitiva de BioOS v5.3.
+Audita los últimos 30 días de dispersión, desvíos y feedback del usuario.
+Calcula los nuevos "pesos_ajustados" para afinar la sensibilidad de los agentes y genera un mensaje ejecutivo breve para Telegram notificando el balance evolutivo mensual.`;
+
+    const contextPayload = {
+      archivos_semanales: archives.slice(-4),
+      deltas_calibracion: deltas.slice(-15),
+      pesos_actuales: weights
+    };
+
+    const response = invokeUniversalLLM(systemPrompt, JSON.stringify(contextPayload), schema, 0.2);
+
+    if (response && response.pesos_ajustados) {
+      try {
+        mutateNVRAM(function(state) {
+          if (!state.L3_Semantic) state.L3_Semantic = {};
+          state.L3_Semantic.evolutionary_weights = response.pesos_ajustados;
+          state.L3_Semantic.calibration_deltas = (state.L3_Semantic.calibration_deltas || []).slice(-5);
+        }, "Commit_Meta_Evolution_Weights");
+      } catch (e) {
+        console.warn("[META_EVOLVE] Error persistiendo nuevos pesos:", e.message);
+      }
+    }
+
+    let delivered = false;
+    if (response && response.mensaje_telegram && typeof _rawSystemNotify === "function") {
+      delivered = _rawSystemNotify("🧬 <b>BioOS | Ciclo Mensual de Meta-Evolución</b>\n\n" + response.mensaje_telegram);
+    }
+
+    return {
+      success: true,
+      delivered: delivered,
+      evolution: response
+    };
+  });
+}

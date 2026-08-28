@@ -11,37 +11,42 @@ const _AGENT_REGISTRY = {
   fisiologo: {
     id: "fisiologo", promptKey: "fisiologo", events: ["MORNING_BRIEFING", "EVENING_BRIEFING", "USER_FEEDBACK"],
     properties: {
+      razonamiento_clinico_oculto: { type: "STRING", description: "Deducción biomecánica y análisis paso a paso de carga vs recuperación antes de prescribir." },
       diagnostico_biomecanico: { type: "STRING", description: "Hipótesis sobre carga física o recuperación; no diagnostica enfermedades." },
       prescripcion_accionable: { type: "STRING", description: "Acción conservadora, reversible y no farmacológica." }
-    }, required: ["diagnostico_biomecanico", "prescripcion_accionable"]
+    }, required: ["razonamiento_clinico_oculto", "diagnostico_biomecanico", "prescripcion_accionable"]
   },
   somnologo: {
     id: "somnologo", promptKey: "somnologo", events: ["MORNING_BRIEFING", "EVENING_BRIEFING", "USER_FEEDBACK"],
     properties: {
+      razonamiento_clinico_oculto: { type: "STRING", description: "Deducción de arquitectura del sueño y sincronización circadiana." },
       analisis_arquitectura: { type: "STRING", description: "Lectura de sueño usando solamente datos disponibles." },
       ajuste_circadiano: { type: "STRING", description: "Acción conservadora sobre horarios, luz o entorno." }
-    }, required: ["analisis_arquitectura", "ajuste_circadiano"]
+    }, required: ["razonamiento_clinico_oculto", "analisis_arquitectura", "ajuste_circadiano"]
   },
   ejecutivo: {
     id: "ejecutivo", promptKey: "ejecutivo", events: ["MORNING_BRIEFING", "EVENING_BRIEFING"],
     properties: {
+      razonamiento_clinico_oculto: { type: "STRING", description: "Deducción de demanda de trabajo cognitivo y límites de foco." },
       diagnostico_carga_mental: { type: "STRING", description: "Evaluación de carga cognitiva basada en señales disponibles." },
       optimizacion_agenda: { type: "STRING", description: "Sugerencia de agenda sin ejecutar cambios externos." }
-    }, required: ["diagnostico_carga_mental", "optimizacion_agenda"]
+    }, required: ["razonamiento_clinico_oculto", "diagnostico_carga_mental", "optimizacion_agenda"]
   },
   endocrinologo: {
     id: "endocrinologo", promptKey: "endocrinologo", events: ["MORNING_BRIEFING", "EVENING_BRIEFING", "USER_FEEDBACK"],
     properties: {
+      razonamiento_clinico_oculto: { type: "STRING", description: "Deducción metabólica, balance energético y gasto calórico." },
       lectura_metabolica: { type: "STRING", description: "Tendencias de energía, nutrición, HRV o recuperación sin inferir datos ausentes." },
       recomendacion_habito: { type: "STRING", description: "Hábito de bajo riesgo; sin fármacos, dosis o tratamiento clínico." }
-    }, required: ["lectura_metabolica", "recomendacion_habito"]
+    }, required: ["razonamiento_clinico_oculto", "lectura_metabolica", "recomendacion_habito"]
   },
   psicologo_cog: {
     id: "psicologo_cog", promptKey: "psicologo_cog", events: ["MORNING_BRIEFING", "EVENING_BRIEFING", "USER_FEEDBACK"],
     properties: {
+      razonamiento_clinico_oculto: { type: "STRING", description: "Deducción de carga alostática y autorregulación del SNC." },
       lectura_carga_alostatica: { type: "STRING", description: "Señales de estrés o fatiga cognitiva; no hace diagnóstico psicológico." },
       intervencion_autorregulacion: { type: "STRING", description: "Práctica breve, segura y voluntaria de autorregulación." }
-    }, required: ["lectura_carga_alostatica", "intervencion_autorregulacion"]
+    }, required: ["razonamiento_clinico_oculto", "lectura_carga_alostatica", "intervencion_autorregulacion"]
   }
 };
 
