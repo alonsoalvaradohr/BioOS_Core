@@ -41,6 +41,7 @@ jobs:
         env:
           BIOOS_GAS_DEPLOYMENT_ID: ${{ secrets.BIOOS_GAS_DEPLOYMENT_ID }}
           BIOOS_GAS_DEPLOYMENT_IDS: ${{ secrets.BIOOS_GAS_DEPLOYMENT_IDS }}
+          BIOOS_GAS_EXECUTION_DEPLOYMENT_ID: ${{ secrets.BIOOS_GAS_EXECUTION_DEPLOYMENT_ID }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: node scripts/deploy-gas.mjs

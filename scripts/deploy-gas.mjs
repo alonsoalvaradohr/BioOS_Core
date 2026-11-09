@@ -11,6 +11,8 @@ const scriptId = claspConfig.scriptId;
 const deploymentIds = String(process.env.BIOOS_GAS_DEPLOYMENT_IDS || process.env.BIOOS_GAS_DEPLOYMENT_ID || '')
   .split(',').map((value) => value.trim()).filter(Boolean);
 if (!deploymentIds.length) throw new Error('Define BIOOS_GAS_DEPLOYMENT_ID o BIOOS_GAS_DEPLOYMENT_IDS para seleccionar deployments explícitamente.');
+const executionDeploymentId = String(process.env.BIOOS_GAS_EXECUTION_DEPLOYMENT_ID || '').trim();
+if (!executionDeploymentId) throw new Error('Define BIOOS_GAS_EXECUTION_DEPLOYMENT_ID para reutilizar el deployment owner API existente.');
 
 const configSource = fs.readFileSync(path.join(root, 'apps-script', '00_Sys_Config.js'), 'utf8');
 const versionMatch = configSource.match(/VERSION\s*:\s*["']([^"']+)["']/);
@@ -86,7 +88,12 @@ async function deploy() {
   const deploymentList = await apiRequest(token, '/deployments');
   const deployments = Array.isArray(deploymentList.deployments) ? deploymentList.deployments : [];
   const selected = deploymentIds.map((id) => deployments.find((item) => item.deploymentId === id));
+  const executionDeployment = deployments.find((item) => item.deploymentId === executionDeploymentId);
   if (selected.some((item) => !item)) throw new Error('Uno o más deployments seleccionados no existen; no se subieron archivos.');
+  if (!executionDeployment) throw new Error('El deployment owner API seleccionado no existe; no se subieron archivos.');
+  if (!(executionDeployment.entryPoints || []).some((point) => point.entryPointType === 'EXECUTION_API')) {
+    throw new Error('BIOOS_GAS_EXECUTION_DEPLOYMENT_ID no apunta a un deployment EXECUTION_API; no se subieron archivos.');
+  }
   if (selected.some((item) => !item.deploymentConfig || item.deploymentConfig.versionNumber === undefined)) {
     throw new Error('Un deployment seleccionado apunta a HEAD; el pipeline solo actualiza deployments versionados.');
   }
@@ -112,17 +119,11 @@ async function deploy() {
     });
   }
 
-  // Execution API deployments are immutable in this project. Create one for
-  // each release instead of trying to update an older executable deployment.
-  const executable = await apiRequest(token, '/deployments', {
-    method: 'POST',
-    body: JSON.stringify({ versionNumber: version.versionNumber, manifestFileName: 'appsscript', description: versionDescription + ' (owner API)' })
+  await apiRequest(token, `/deployments/${encodeURIComponent(executionDeploymentId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ deploymentConfig: { scriptId, versionNumber: version.versionNumber, manifestFileName: 'appsscript', description: versionDescription + ' (owner API)' } })
   });
-  if (!(executable.entryPoints || []).some((point) => point.entryPointType === 'EXECUTION_API')) {
-    throw new Error('El deployment API no confirmó entryPointType EXECUTION_API; no se invocará ninguna función.');
-  }
-  console.log('Creado deployment de ejecución API restringido al acceso MYSELF.');
-  console.log(`Actualizados ${deploymentIds.length} deployments web al código ${bioosVersion} (versión GAS ${version.versionNumber}).`);
+  console.log(`Actualizados ${deploymentIds.length} deployments web y el owner API existente al código ${bioosVersion} (versión GAS ${version.versionNumber}).`);
 }
 
 deploy().catch((error) => {
