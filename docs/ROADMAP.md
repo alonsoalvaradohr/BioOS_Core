@@ -5,6 +5,7 @@ Codigo local, runtime GAS y flujos externos son estados distintos. Una correccio
 ## Hallazgos confirmados en el repositorio
 
 - Ticket BIOOS-20261109-08 closes a routing/memory gap: circadian questions previously bypassed history retrieval unless phrased as an average. v8.11.0 adds sleep session/stage retrieval and structured L2 boundaries. Runtime Fit coverage still must be confirmed from returned HTTP/point counts.
+- Ticket BIOOS-20261109-09 adds historical running-session routing, exact session distance queries, structured L2 activity memory and sanitized provider diagnostics. Telegram evidence is still required to determine whether this user's Fit integration exposes Mi Fitness run sessions and distance.
 
 - BioOS 8.7.1 estaba desplegado; `BIOOS_SENSOR_PROVIDER` ausente cae a `health_connect`, que solo devolvia `HEALTH_CONNECT_ANDROID_BRIDGE_NOT_INSTALLED`.
 - El proyecto conserva lector OAuth REST de Google Fit y scopes. Alonso confirma que antes usaba Mobvoi/Health -> Google Fit y que Mi Fitness esta vinculado a Google Fit. Eso identifica la ruta que se debe restaurar antes de introducir otro bridge.

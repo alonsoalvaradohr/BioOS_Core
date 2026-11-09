@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.12.0 - 2026-11-09
+
+- Historical run questions are routed to a Google Fit session reader for the latest running, jogging, and treadmill sessions, with exact per-session distance requests and derived pace comparisons.
+- Running sessions and source timestamps are persisted as structured L2 facts; cached distance is reused only for the same Google Fit session ID.
+- `/doctor` now shows a sanitized Google API status/code/reason for failed aggregates, without exposing raw response bodies or credentials.
+- Missing sessions, distance, or duration remain explicitly unavailable; BioOS does not infer pace from steps or calories.
+
 ## 8.11.0 - 2026-11-09
 
 - Historical sleep-time questions now use a deterministic route even without the words “average” or “sleep”.

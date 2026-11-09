@@ -466,7 +466,7 @@ function _diagnoseSensorsLive_(sourceChatId) {
       const reportLines = Object.keys(metricReport).map(function(name) {
         const metric = metricReport[name] || {}, counts = metric.metricPointCounts || {};
         const count = Object.keys(counts).reduce(function(sum, key) { return sum + Number(counts[key] || 0); }, 0);
-        return name + ': HTTP ' + (metric.httpStatus || 'sin código') + ', puntos ' + count;
+        return name + ': HTTP ' + (metric.httpStatus || 'sin código') + ', puntos ' + count + (metric.error ? ' (' + _orchestratorEscapeHtml_(metric.error) + ')' : '');
       });
       lines.push('Respuesta por consulta Google Fit: ' + (reportLines.join(' | ') || 'sin desglose'));
     }

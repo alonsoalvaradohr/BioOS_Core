@@ -46,7 +46,7 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     const output = isScheduledBriefing
       ? _buildEvidenceBriefing_(triggerEvent, payload, memory)
       : isHistoricalAnalytics
-        ? (payload.history_request.type === 'sleep_schedule' ? _buildHistoricalSleepScheduleAnswer_(payload) : _buildHistoricalAnalyticsAnswer_(payload))
+        ? (payload.history_request.type === 'sleep_schedule' ? _buildHistoricalSleepScheduleAnswer_(payload) : payload.history_request.type === 'running_comparison' ? _buildRunningComparisonAnswer_(payload) : _buildHistoricalAnalyticsAnswer_(payload))
       : _synthesizeOrchestration_(rom, memory, payload, approved, taskCount, context);
     if (triggerEvent === 'USER_FEEDBACK' && typeof Memory_captureUserFeedback === 'function') {
       try { Memory_captureUserFeedback(payload.user_nlp, { requestId: context.requestId, eventId: context.eventId, observationId: payload.current_observation_id }); }
@@ -294,6 +294,12 @@ function _orchestratorReportWindow_(triggerEvent, nowMs) {
 
 function _orchestratorHistoryRequest_(question) {
   var q = String(question || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  var running = /(carrer|running|run\b|rodaje|entrenamiento|sesion|actividad deportiva)/i.test(q);
+  var pace = /(avg\s*pace|average\s*pace|ritmo|pace|min\/km|minutos por kilometro)/i.test(q);
+  var latestRuns = /(ultim|recient|last|anteriores|entre.*carrer|contrasta|compara|mejor|deterior|diferencia)/i.test(q) && running;
+  if (latestRuns && (pace || /(carrer|running|run\b|rodaje)/i.test(q))) {
+    return { type: 'running_comparison', count: 2, metric: pace ? 'avg_pace' : 'session_summary', startMs: Date.now() - 180 * Sensor_HOURS_24_MS, endMs: Date.now() };
+  }
   var previousWeek = /(semana pasada|semana que paso|ultima semana|ultimos 7 dias)/i.test(q);
   var sleepSchedule = /(acost|dormi|dormir|levante|despert|hora de dormir|hora de despertar|hora de acost|hora de levant|cama)/i.test(q);
   var weeklyAverage = /(promedio|media|promedios)/i.test(q) && /(sueno|actividad|pasos|distancia|calorias)/i.test(q);
@@ -304,6 +310,31 @@ function _orchestratorHistoryRequest_(question) {
   return { type: sleepSchedule ? 'sleep_schedule' : 'previous_calendar_week', startMs: start, endMs: monday,
     startLabel: Utilities.formatDate(new Date(start), tz, 'yyyy-MM-dd'),
     endLabel: Utilities.formatDate(new Date(monday - 1), tz, 'yyyy-MM-dd') };
+}
+
+function _buildRunningComparisonAnswer_(payload) {
+  var result = payload.historical_activities || {}, runs = (result.sessions || []).slice().sort(function (a, b) { return b.startMs - a.startMs; }).slice(0, 2);
+  var lines = ['<b>Comparación de tus dos carreras más recientes</b>'];
+  if (runs.length < 2 || runs.some(function (r) { return !(Number(r.distanceKm) > 0) || !(Number(r.durationMinutes) > 0); })) {
+    lines.push('No puedo determinar si tu ritmo medio mejoró o empeoró con los datos que Google Fit entregó a BioOS.');
+    runs.forEach(function (r, i) {
+      var date = isFinite(Number(r.startMs)) ? Utilities.formatDate(new Date(Number(r.startMs)), 'America/Costa_Rica', 'yyyy-MM-dd HH:mm') : 'fecha sin dato';
+      lines.push('Carrera ' + (i + 1) + ' · ' + date + ': distancia ' + (Number(r.distanceKm) > 0 ? Number(r.distanceKm).toFixed(2) + ' km' : 'sin dato') + ', duración ' + (Number(r.durationMinutes) > 0 ? Number(r.durationMinutes).toFixed(1) + ' min (' + (r.durationKind === 'active' ? 'activa' : 'transcurrida') + ')' : 'sin dato') + '.');
+    });
+    if (runs.length < 2) lines.push('Google Fit devolvió ' + runs.length + ' sesiones de carrera en la ventana de 180 días; hacen falta dos sesiones verificables.');
+    var status = result.status || {};
+    if (status.sessions) lines.push('Diagnóstico del canal: sesiones HTTP ' + status.sessions + ' (' + Number(result.sessionCount || 0) + ' candidatas); distancia HTTP ' + (status.distance || 'sin consulta') + (status.distanceError ? ' (' + _orchestratorEscapeHtml_(status.distanceError) + ')' : '') + '.');
+    lines.push('La app puede mostrar la carrera aunque Google Fit no entregue sus métricas a esta integración. No inferí distancia ni ritmo a partir de pasos o calorías.');
+    return { mensaje_telegram: lines.join('\n'), resumen_ejecutivo: 'Comparación bloqueada por campos de sesión ausentes en Google Fit.', evidencia: result };
+  }
+  runs.sort(function (a, b) { return a.startMs - b.startMs; });
+  var paces = runs.map(function (r) { return Number(r.durationMinutes) / Number(r.distanceKm); }), delta = paces[1] - paces[0];
+  function fmt(p) { var sec = Math.round(p * 60); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') + ' min/km'; }
+  lines.push('Carrera anterior: <b>' + fmt(paces[0]) + '</b> (' + runs[0].distanceKm.toFixed(2) + ' km en ' + runs[0].durationMinutes.toFixed(1) + ' min ' + (runs[0].durationKind === 'active' ? 'activos' : 'transcurridos') + ', ' + Utilities.formatDate(new Date(runs[0].startMs), 'America/Costa_Rica', 'yyyy-MM-dd') + ').');
+  lines.push('Carrera más reciente: <b>' + fmt(paces[1]) + '</b> (' + runs[1].distanceKm.toFixed(2) + ' km en ' + runs[1].durationMinutes.toFixed(1) + ' min ' + (runs[1].durationKind === 'active' ? 'activos' : 'transcurridos') + ', ' + Utilities.formatDate(new Date(runs[1].startMs), 'America/Costa_Rica', 'yyyy-MM-dd') + ').');
+  lines.push((delta < 0 ? 'Mejoría' : delta > 0 ? 'Deterioro' : 'Sin cambio') + ' de ' + fmt(Math.abs(delta)) + ' en ritmo medio transcurrido.');
+  lines.push('Cálculo: ' + (runs[0].durationKind === 'active' && runs[1].durationKind === 'active' ? 'duración activa' : 'duración registrada') + ' ÷ distancia; el dato se etiqueta como activo o transcurrido según Google Fit. Fuente: ' + (result.source || 'Google Fit') + '; lectura ' + (result.fetchedAt || 'actual') + '.');
+  return { mensaje_telegram: lines.join('\n'), resumen_ejecutivo: 'Contraste calculado de las dos sesiones de carrera más recientes.', evidencia: result };
 }
 
 function _buildHistoricalSleepScheduleAnswer_(payload) {
@@ -368,7 +399,16 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
     payload.user_text = _orchestratorExtractUserText_(rawPayload);
     payload.history_request = _orchestratorHistoryRequest_(payload.user_text);
     if (!payload.history_request) payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal);
-    if (payload.history_request && payload.history_request.type === 'sleep_schedule' && typeof Sensor_GoogleFit_fetchSleepHistory_ === 'function') {
+    if (payload.history_request && payload.history_request.type === 'running_comparison' && typeof Sensor_GoogleFit_fetchRecentRuns_ === 'function') {
+      payload.historical_activities = _safeETL('GoogleFit_Recent_Runs', function () { return Sensor_GoogleFit_fetchRecentRuns_(payload.history_request); }, { available: false, reason: 'RUN_HISTORY_READER_UNAVAILABLE', sessions: [], status: {} });
+      if (typeof Memory_listRunningSessions === 'function') {
+        var rememberedRuns = Memory_listRunningSessions({ startMs: payload.history_request.startMs, endMs: payload.history_request.endMs, limit: 20 });
+        var rememberedById = {}; rememberedRuns.forEach(function (r) { rememberedById[String(r.sessionId)] = r; });
+        payload.historical_activities.sessions = (payload.historical_activities.sessions || []).map(function (r) { var saved = rememberedById[String(r.id)]; if (saved && !(Number(r.distanceKm) > 0) && Number(saved.distanceKm) > 0) r.distanceKm = Number(saved.distanceKm); return r; });
+        if (!payload.historical_activities.sessions.length && rememberedRuns.length) payload.historical_activities = { available: false, source: 'bioos_l2', sessions: rememberedRuns, reason: payload.historical_activities.reason, status: payload.historical_activities.status };
+      }
+      if (payload.historical_activities.sessions.length && typeof Memory_storeRunningSessions === 'function') Memory_storeRunningSessions(payload.historical_activities);
+    } else if (payload.history_request && payload.history_request.type === 'sleep_schedule' && typeof Sensor_GoogleFit_fetchSleepHistory_ === 'function') {
       payload.historical_sleep = _safeETL('GoogleFit_Sleep_History', function () {
         return Sensor_GoogleFit_fetchSleepHistory_(payload.history_request.startMs, payload.history_request.endMs);
       }, { available: false, reason: 'SLEEP_HISTORY_READER_UNAVAILABLE', sessions: [], segments: [] });

@@ -378,6 +378,28 @@ function Memory_listSleepSessions(options) {
   }).map(function (item) { return item.payload; }).sort(function (a, b) { return a.startMs - b.startMs; });
 }
 
+/** Persist verified running session facts and source timestamps in structured episodic memory. */
+function Memory_storeRunningSessions(history) {
+  if (!history || history.source !== 'google_fit' || !Array.isArray(history.sessions)) return { ok: false, stored: 0, reason: 'NO_RUNNING_SESSIONS' };
+  var recordedAt = history.fetchedAt || new Date().toISOString(), sessions = history.sessions.filter(function (s) { return s && Number(s.startMs) > 0 && Number(s.endMs) > Number(s.startMs); }).slice(0, 5).map(function (s) {
+    return { sessionId: String(s.id || s.sessionId), startMs: Number(s.startMs), endMs: Number(s.endMs), activityType: Number(s.activityType), durationMinutes: Number(s.durationMinutes) || null, durationKind: String(s.durationKind || 'wall'), wallMinutes: Number(s.wallMinutes) || null, distanceKm: Number(s.distanceKm) > 0 ? Number(s.distanceKm) : null, source: String(s.source || 'Google Fit'), sourceKind: 'google_fit_running_session', recordedAt: recordedAt };
+  });
+  if (!sessions.length) return { ok: false, stored: 0, reason: 'NO_VALID_RUNNING_SESSIONS' };
+  mutateNVRAM(function (state) { sessions.forEach(function (session) {
+    var previous = state.L2_Episodic.raw_data_lake.filter(function (item) { return item && item.data_type === 'running_session' && item.payload && item.payload.sessionId === session.sessionId; })[0];
+    if (!(session.distanceKm > 0) && previous && Number(previous.payload.distanceKm) > 0) session.distanceKm = Number(previous.payload.distanceKm);
+    state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function (item) { return !(item && item.data_type === 'running_session' && item.payload && item.payload.sessionId === session.sessionId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'running_session', payload: session });
+  }); }, 'Mem_Ingest_Running_Sessions');
+  return { ok: true, stored: sessions.length, source: history.source };
+}
+
+function Memory_listRunningSessions(options) {
+  var opts = options || {}, startMs = Number(opts.startMs) || 0, endMs = Number(opts.endMs) || Date.now(), limit = Math.max(1, Math.min(50, Number(opts.limit) || 10));
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function (item) { var s = item && item.data_type === 'running_session' && item.payload; return s && s.startMs >= startMs && s.startMs <= endMs; }).map(function (item) { return item.payload; }).sort(function (a, b) { return b.startMs - a.startMs; }).slice(0, limit);
+}
+
 /** Obsidian-like view assembled from semantic atoms and their evidence IDs. */
 function Memory_buildEvidenceGraph_(atoms, observations) {
   atoms = Array.isArray(atoms) ? atoms : []; observations = Array.isArray(observations) ? observations : [];

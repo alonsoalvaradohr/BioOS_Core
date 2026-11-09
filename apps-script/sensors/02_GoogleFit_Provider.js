@@ -137,7 +137,7 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
       telemetryReport[bName] = {
         ok: false,
         httpStatus: status,
-        errorResponse: bodyText.slice(0, 200)
+        error: Sensor_GoogleFit_safeHttpError_(bodyText)
       };
       Sensor_logWarning_('[SENSOR] Google Fit ' + bName + ' metric degraded: HTTP ' + status);
     }
@@ -163,6 +163,64 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
     timeZone: (typeof Session !== 'undefined' && Session.getScriptTimeZone) ? Session.getScriptTimeZone() : 'unknown',
     emptyDataWindow: !hasPoints
   });
+}
+
+/** Keep only Google's non-sensitive status/code fields; never echo arbitrary response bodies. */
+function Sensor_GoogleFit_safeHttpError_(bodyText) {
+  try {
+    var parsed = Sensor_boundedJson_(bodyText), err = parsed && parsed.error || {};
+    var parts = [];
+    if (err.status && /^[A-Z_]{3,40}$/.test(String(err.status))) parts.push(String(err.status));
+    if (err.code && isFinite(Number(err.code))) parts.push('code=' + Number(err.code));
+    (Array.isArray(err.errors) ? err.errors : []).slice(0, 2).forEach(function (item) {
+      var reason = String(item && item.reason || '');
+      if (/^[a-zA-Z0-9_.-]{1,60}$/.test(reason)) parts.push('reason=' + reason);
+    });
+    return parts.join(', ') || 'GOOGLE_FIT_HTTP_ERROR';
+  } catch (_) { return 'GOOGLE_FIT_HTTP_ERROR'; }
+}
+
+/** Fetch recent running sessions, then exact per-session distance. Never estimates pace from steps/calories. */
+function Sensor_GoogleFit_fetchRecentRuns_(request) {
+  if (typeof ScriptApp === 'undefined' || typeof UrlFetchApp === 'undefined') return { available: false, reason: 'GOOGLE_FIT_UNSUPPORTED_RUNTIME', sessions: [], status: {} };
+  var token = ScriptApp.getOAuthToken();
+  if (!token) return { available: false, reason: 'GOOGLE_FIT_AUTH_UNAVAILABLE', sessions: [], status: {} };
+  var startMs = Number(request && request.startMs) || Date.now() - 180 * Sensor_HOURS_24_MS;
+  var endMs = Number(request && request.endMs) || Date.now();
+  if (!(endMs > startMs && endMs - startMs <= 366 * Sensor_HOURS_24_MS)) return { available: false, reason: 'RUN_HISTORY_WINDOW_INVALID', sessions: [], status: {} };
+  var url = 'https://www.googleapis.com/fitness/v1/users/me/sessions?startTime=' + encodeURIComponent(new Date(startMs).toISOString()) + '&endTime=' + encodeURIComponent(new Date(endMs).toISOString());
+  var resp = UrlFetchApp.fetch(url, { method: 'get', headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: false });
+  var status = { sessions: resp.getResponseCode(), distance: null }, candidates = [];
+  if (status.sessions < 200 || status.sessions >= 300) {
+    status.sessionsError = Sensor_GoogleFit_safeHttpError_(resp.getContentText());
+    return { available: false, source: 'google_fit', fetchedAt: new Date().toISOString(), sessionCount: 0, sessions: [], status: status, reason: 'GOOGLE_FIT_SESSIONS_HTTP_' + status.sessions };
+  }
+  var data = Sensor_boundedJson_(resp.getContentText());
+  (data.session || []).forEach(function (s) {
+    var start = Number(s.startTimeMillis), end = Number(s.endTimeMillis), type = Number(s.activityType);
+    // Google Fit ActivityType: 8 running, 56 jogging, 58 running on treadmill.
+    if ([8, 56, 58].indexOf(type) === -1 || !isFinite(start) || !isFinite(end) || end <= start || start < startMs || end > endMs) return;
+    var activeTime = Number(s.activeTimeMillis), wallTime = (end - start) / 60000;
+    candidates.push({ id: String(s.id || start), startMs: start, endMs: end, activityType: type, name: String(s.name || ''), application: String((s.application || {}).name || (s.application || {}).packageName || ''), durationMinutes: activeTime > 0 ? activeTime / 60000 : wallTime, durationKind: activeTime > 0 ? 'active' : 'wall', wallMinutes: wallTime, distanceKm: null, source: 'Google Fit', sourceKind: 'google_fit_running_session' });
+  });
+  candidates.sort(function (a, b) { return b.startMs - a.startMs; });
+  candidates = candidates.slice(0, Math.max(2, Math.min(5, Number(request && request.count) || 2)));
+  if (candidates.length) {
+    var requests = candidates.map(function (s) { return { url: 'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate', method: 'post', contentType: 'application/json', payload: JSON.stringify({ startTimeMillis: String(s.startMs), endTimeMillis: String(s.endMs), aggregateBy: [{ dataTypeName: 'com.google.distance.delta' }] }), headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: false }; });
+    var distanceResponses = UrlFetchApp.fetchAll(requests), distanceStatuses = [];
+    distanceResponses.forEach(function (distanceResp, index) {
+      var code = distanceResp.getResponseCode(); distanceStatuses.push(code);
+      if (code < 200 || code >= 300) { status.distanceError = Sensor_GoogleFit_safeHttpError_(distanceResp.getContentText()); return; }
+      try {
+        var aggregate = Sensor_boundedJson_(distanceResp.getContentText()), meters = 0;
+        (aggregate.bucket || []).forEach(function (bucket) { (bucket.dataset || []).forEach(function (dataset) { (dataset.point || []).forEach(function (point) { var value = point.value && point.value[0] || {}; meters += Number(value.fpVal || value.intVal || 0); }); }); });
+        if (meters > 0) candidates[index].distanceKm = meters / 1000;
+      } catch (_) { status.distanceError = 'GOOGLE_FIT_DISTANCE_JSON_ERROR'; }
+    });
+    status.distance = distanceStatuses.every(function (code) { return code >= 200 && code < 300; }) ? 200 : distanceStatuses.filter(function (code) { return code < 200 || code >= 300; })[0];
+    candidates.forEach(function (s) { s.durationMinutes = Number(s.durationMinutes.toFixed(2)); s.wallMinutes = Number(s.wallMinutes.toFixed(2)); if (s.distanceKm !== null) s.distanceKm = Number(s.distanceKm.toFixed(3)); });
+  }
+  return { available: true, source: 'google_fit', fetchedAt: new Date().toISOString(), window: { startMs: startMs, endMs: endMs }, sessionCount: candidates.length, sessions: candidates, status: status, reason: candidates.length ? null : 'NO_RUNNING_SESSIONS_IN_WINDOW' };
 }
 
 function Sensor_GoogleFit_sessionsFromSleepBuckets_(buckets) {
