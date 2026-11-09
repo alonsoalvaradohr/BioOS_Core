@@ -107,9 +107,15 @@ function compileQualitativeFeedback(rawInput) {
           "type": "ARRAY",
           "items": { "type": "STRING" },
           "description": "Planes operativos o compromisos del usuario para inyectar en Google Tasks."
-        }
+        },
+        "activity_sessions": { "type": "ARRAY", "items": { "type": "OBJECT", "properties": {
+          "source_app": { "type": "STRING" }, "activity_date_local": { "type": "STRING" }, "activity_time_local": { "type": "STRING" },
+          "distance_km": { "type": "NUMBER" }, "duration_seconds": { "type": "NUMBER" }, "displayed_avg_pace_seconds_per_km": { "type": "NUMBER" },
+          "average_heart_rate_bpm": { "type": "NUMBER" }, "max_heart_rate_bpm": { "type": "NUMBER" }, "steps": { "type": "NUMBER" },
+          "active_calories_kcal": { "type": "NUMBER" }, "total_calories_kcal": { "type": "NUMBER" }
+        }, "required": ["source_app", "activity_date_local", "activity_time_local", "distance_km", "duration_seconds", "displayed_avg_pace_seconds_per_km", "average_heart_rate_bpm", "max_heart_rate_bpm", "steps", "active_calories_kcal", "total_calories_kcal"] }, "description": "Solo reportes de ejercicio visibles en imágenes; usa 0 o cadena vacía para dato ausente/ilegible." }
       },
-      "required": ["sintomatologia_fisica", "carga_alostatica_percibida", "adherencia_nutricional", "intenciones_futuras"]
+      "required": ["sintomatologia_fisica", "carga_alostatica_percibida", "adherencia_nutricional", "intenciones_futuras", "activity_sessions"]
     };
 
     const prompt = `Eres el Agente Compilador Multimodal de BioOS v5.2 (Audio, Imagen, Texto).
@@ -117,7 +123,8 @@ Analiza las entradas (notas de voz, fotos de alimentos, texto) y extrae:
 1. "sintomatologia_fisica": Molestias musculares, articulares o fatiga.
 2. "carga_alostatica_percibida": Nivel de estrés mental o cognitivo.
 3. "adherencia_nutricional": Alimentos detectados en texto o fotografiados, con estimación de calorías y desglose de macros (Proteínas, Carbohidratos, Grasas).
-4. "intenciones_futuras": Compromisos, tareas a realizar o sesiones de running planeadas.`;
+4. "intenciones_futuras": Compromisos, tareas a realizar o sesiones de running planeadas.
+5. "activity_sessions": solo cuando una imagen muestre claramente una actividad deportiva; copia los números legibles y el origen visible, usa 0/cadena vacía para cualquier campo ilegible o ausente. No adivines fecha, distancia, ritmo ni frecuencia cardíaca y no conviertas pasos/calorías en distancia. El tiempo y ritmo mostrados son del usuario/app, no telemetría directa de Google Fit.`;
 
     let userPayloadParam;
 
@@ -155,6 +162,12 @@ Analiza las entradas (notas de voz, fotos de alimentos, texto) y extrae:
     }
 
     const compiledData = invokeUniversalLLM(prompt, userPayloadParam, schema, 0.1);
+    if (compiledData && typeof compiledData === 'object') {
+      var photoEvents = ingressItems.filter(function(item) { return item && item.kind === 'photo'; }).map(function(item) { return String(item.eventId || ''); });
+      (Array.isArray(compiledData.activity_sessions) ? compiledData.activity_sessions : []).forEach(function(session, index) {
+        if (session && typeof session === 'object') session.evidenceEventId = photoEvents[Math.min(index, Math.max(0, photoEvents.length - 1))] || '';
+      });
+    }
 
     if (typeof sendSystemTelemetry === "function") {
       const intentionsCount = compiledData.intenciones_futuras ? compiledData.intenciones_futuras.length : 0;

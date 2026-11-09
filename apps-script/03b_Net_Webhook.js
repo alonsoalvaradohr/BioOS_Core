@@ -360,6 +360,15 @@ function _netTelemetry_(context, severity, message, fields) {
   if (typeof sendSystemTelemetry === 'function') return sendSystemTelemetry(severity, message, fields);
 }
 
+/** Check exactly the Google Fit read scope required for distance, without widening OAuth access. */
+function _bioosGoogleFitLocationAuthorization_() {
+  try {
+    var scope = 'https://www.googleapis.com/auth/fitness.location.read';
+    var info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL, [scope]);
+    return { status: String(info.getAuthorizationStatus()), url: info.getAuthorizationUrl() || null };
+  } catch (error) { return { status: 'UNAVAILABLE', reason: String(error && error.message || error).slice(0, 100) }; }
+}
+
 function _handleBypassCommand(command, sourceChatId) {
   try {
     const rawCmd = String(command || '').trim();
@@ -381,7 +390,11 @@ function _handleBypassCommand(command, sourceChatId) {
       return;
     }
     if (normalizedCommand === "/reauth" || normalizedCommand === "/auth") {
-      const authMsg = '<b>Integracion biometrica</b>\nBioOS consulta primero la ruta OAuth existente de Google Fit, donde Mi Fitness puede sincronizar ejercicios compatibles. Usa /doctor para ver el resultado real. Si Google Fit devuelve 401/403, hay que reautorizar en el proyecto Apps Script existente; Health Connect directo es la ruta futura y no tiene puente servidor instalado.';
+      const auth = _bioosGoogleFitLocationAuthorization_();
+      let authMsg = '<b>Acceso de distancia Google Fit</b>\nScope mínimo consultado: <code>fitness.location.read</code>; BioOS no solicitará permisos adicionales.';
+      if (auth.status === 'REQUIRED' && auth.url && /^https:\/\/(?:accounts|script)\.google\.com\//i.test(auth.url)) authMsg += '\nLa autorización de este scope falta. Abre este enlace con la cuenta que ejecuta el Apps Script y acepta el permiso:\n' + auth.url;
+      else if (auth.status === 'NOT_REQUIRED') authMsg += '\nApps Script informa que el scope ya está autorizado. Repetir OAuth no resolvería por sí solo el 403; falta revisar acceso de Google Fit a los datos de distancia del origen Mi Fitness. Ejecuta /doctor después de revisar ese acceso.';
+      else authMsg += '\nNo pude obtener el estado OAuth (' + _orchestratorEscapeHtml_(auth.status) + '). Ejecuta /doctor y revisa el Apps Script propietario.';
       if (typeof _rawSystemNotify === "function") _rawSystemNotify(authMsg, sourceChatId);
       return;
     }
@@ -469,6 +482,10 @@ function _diagnoseSensorsLive_(sourceChatId) {
         return name + ': HTTP ' + (metric.httpStatus || 'sin código') + ', puntos ' + count + (metric.error ? ' (' + _orchestratorEscapeHtml_(metric.error) + ')' : '');
       });
       lines.push('Respuesta por consulta Google Fit: ' + (reportLines.join(' | ') || 'sin desglose'));
+      if (metricReport.location && metricReport.location.httpStatus === 403) {
+        const auth = _bioosGoogleFitLocationAuthorization_();
+        lines.push('Estado OAuth del scope fitness.location.read: ' + _orchestratorEscapeHtml_(auth.status) + '. Usa /reauth solo si el estado es REQUIRED.');
+      }
     }
     lines.push('Pulso actual en vivo: no disponible por esta ruta cloud; RHR solo si el proveedor lo sincroniza explícitamente.');
   } catch (error) {

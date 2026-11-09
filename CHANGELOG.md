@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.13.0 - 2026-11-09
+
+- `/doctor` checks the single `fitness.location.read` permission needed for distance; private `/reauth` returns its Apps Script consent URL only when authorization is actually required. No scopes are added.
+- Activity vs. performance question plans are separated: a two-run comparison reads two sessions; last-run assessment reads one and reports when a national benchmark is missing.
+- Multimodal compiler extracts only visible workout values from user-submitted images, anchors them to the Telegram evidence event, and stores validated metrics in structured L2 as `reported` without keeping image bytes.
+- An image report links to a Google Fit session only when there is one unique local start within 15 minutes. Reports retain their own source and pace consistency; sources are never overwritten or conflated.
+
 ## 8.12.0 - 2026-11-09
 
 - Historical run questions are routed to a Google Fit session reader for the latest running, jogging, and treadmill sessions, with exact per-session distance requests and derived pace comparisons.

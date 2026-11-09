@@ -205,7 +205,7 @@ function Sensor_GoogleFit_fetchRecentRuns_(request) {
   });
   candidates.sort(function (a, b) { return b.startMs - a.startMs; });
   candidates = candidates.slice(0, Math.max(2, Math.min(5, Number(request && request.count) || 2)));
-  if (candidates.length) {
+  if (candidates.length && (!request || request.includeDistance !== false)) {
     var requests = candidates.map(function (s) { return { url: 'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate', method: 'post', contentType: 'application/json', payload: JSON.stringify({ startTimeMillis: String(s.startMs), endTimeMillis: String(s.endMs), aggregateBy: [{ dataTypeName: 'com.google.distance.delta' }] }), headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: false }; });
     var distanceResponses = UrlFetchApp.fetchAll(requests), distanceStatuses = [];
     distanceResponses.forEach(function (distanceResp, index) {

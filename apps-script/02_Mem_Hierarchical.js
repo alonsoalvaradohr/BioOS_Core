@@ -400,6 +400,52 @@ function Memory_listRunningSessions(options) {
   return lake.filter(function (item) { var s = item && item.data_type === 'running_session' && item.payload; return s && s.startMs >= startMs && s.startMs <= endMs; }).map(function (item) { return item.payload; }).sort(function (a, b) { return b.startMs - a.startMs; }).slice(0, limit);
 }
 
+/** Store only explicitly visible user-provided workout metrics; never retain the image bytes. */
+function Memory_storeReportedRunningSessions(items, requestContext) {
+  if (!Array.isArray(items) || !items.length) return { stored: 0, sessions: [], reason: 'NO_REPORTED_RUNS' };
+  var ctx = requestContext || {}, recordedAt = new Date().toISOString(), sessions = [];
+  items.slice(0, 5).forEach(function (input, index) {
+    if (!input || typeof input !== 'object') return;
+    if (!String(input.evidenceEventId || '')) return;
+    var distance = Number(input.distance_km), duration = Number(input.duration_seconds);
+    if (!(distance > 0 && distance <= 300 && duration >= 60 && duration <= 172800)) return;
+    var paceShown = Number(input.displayed_avg_pace_seconds_per_km), paceDerived = duration / distance;
+    var date = /^\d{4}-\d{2}-\d{2}$/.test(String(input.activity_date_local || '')) ? String(input.activity_date_local) : '';
+    var time = /^\d{2}:\d{2}$/.test(String(input.activity_time_local || '')) ? String(input.activity_time_local) : '';
+    var reportId = String(input.evidenceEventId).slice(0, 100) + '-' + index;
+    var record = { reportId: reportId, activityDateLocal: date || null, activityTimeLocal: time || null,
+      sourceApp: String(input.source_app || 'aplicación no identificada').slice(0, 60), distanceKm: Number(distance.toFixed(3)), durationSeconds: Math.round(duration),
+      displayedPaceSecondsPerKm: paceShown > 0 && paceShown < 3600 ? Math.round(paceShown) : null,
+      derivedPaceSecondsPerKm: Number(paceDerived.toFixed(1)), paceConsistency: paceShown > 0 && paceShown < 3600 ? (Math.abs(paceShown - paceDerived) / paceDerived <= 0.08 ? 'consistent' : 'mismatch') : 'derived_only',
+      averageHeartRateBpm: Number(input.average_heart_rate_bpm) >= 30 && Number(input.average_heart_rate_bpm) <= 240 ? Number(input.average_heart_rate_bpm) : null,
+      maxHeartRateBpm: Number(input.max_heart_rate_bpm) >= 30 && Number(input.max_heart_rate_bpm) <= 240 ? Number(input.max_heart_rate_bpm) : null,
+      steps: Number(input.steps) > 0 && Number(input.steps) <= 100000 ? Math.round(Number(input.steps)) : null,
+      activeCaloriesKcal: Number(input.active_calories_kcal) > 0 && Number(input.active_calories_kcal) <= 10000 ? Math.round(Number(input.active_calories_kcal)) : null,
+      totalCaloriesKcal: Number(input.total_calories_kcal) > 0 && Number(input.total_calories_kcal) <= 10000 ? Math.round(Number(input.total_calories_kcal)) : null,
+      source: 'telegram_visual_user_report', status: 'reported', recordedAt: recordedAt, evidenceEventId: String(input.evidenceEventId || ctx.eventId || '') };
+    if (date && time && typeof Memory_listRunningSessions === 'function') {
+      var shownAt = Date.parse(date + 'T' + time + ':00-06:00'), localDayStart = Date.parse(date + 'T00:00:00-06:00');
+      var fitRuns = Memory_listRunningSessions({ startMs: localDayStart, endMs: localDayStart + 24 * 60 * 60 * 1000, limit: 20 }).filter(function (run) { return Math.abs(Number(run.startMs) - shownAt) <= 15 * 60 * 1000; });
+      if (fitRuns.length === 1) { record.googleFitSessionId = fitRuns[0].sessionId; record.linkedFitDurationMinutes = Number(fitRuns[0].durationMinutes) || null; record.correlation = 'probable_same_local_start_within_15m'; }
+    }
+    sessions.push(record);
+  });
+  if (!sessions.length) return { stored: 0, sessions: [], reason: 'NO_VALID_REPORTED_RUNS' };
+  mutateNVRAM(function (state) { sessions.forEach(function (session) {
+    state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function (item) { return !(item && item.data_type === 'reported_running_session' && item.payload && item.payload.reportId === session.reportId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'reported_running_session', payload: session });
+  }); }, 'Mem_Ingest_Reported_Running_Sessions');
+  return { stored: sessions.length, sessions: sessions, source: 'telegram_visual_user_report' };
+}
+
+function Memory_listReportedRunningSessions(options) {
+  var opts = options || {}, startMs = Number(opts.startMs) || 0, endMs = Number(opts.endMs) || Date.now(), limit = Math.max(1, Math.min(50, Number(opts.limit) || 10));
+  var startDate = startMs ? Utilities.formatDate(new Date(startMs), 'America/Costa_Rica', 'yyyy-MM-dd') : '0000-00-00';
+  var endDate = Utilities.formatDate(new Date(endMs), 'America/Costa_Rica', 'yyyy-MM-dd');
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function (item) { var r = item && item.data_type === 'reported_running_session' && item.payload; return r && r.activityDateLocal && r.activityDateLocal >= startDate && r.activityDateLocal <= endDate; }).map(function (item) { return item.payload; }).sort(function (a, b) { return String(b.activityDateLocal + (b.activityTimeLocal || '')).localeCompare(String(a.activityDateLocal + (a.activityTimeLocal || ''))); }).slice(0, limit);
+}
+
 /** Obsidian-like view assembled from semantic atoms and their evidence IDs. */
 function Memory_buildEvidenceGraph_(atoms, observations) {
   atoms = Array.isArray(atoms) ? atoms : []; observations = Array.isArray(observations) ? observations : [];
