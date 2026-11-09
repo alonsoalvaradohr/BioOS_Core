@@ -112,25 +112,16 @@ async function deploy() {
     });
   }
 
-  const apiExecutables = deployments.filter((item) => (item.entryPoints || []).some((point) => point.entryPointType === 'EXECUTION_API'));
-  if (apiExecutables.length) {
-    for (const executable of apiExecutables) {
-      await apiRequest(token, `/deployments/${encodeURIComponent(executable.deploymentId)}`, {
-        method: 'PUT',
-        body: JSON.stringify({ deploymentConfig: { scriptId, versionNumber: version.versionNumber, description: versionDescription + ' (owner API)' } })
-      });
-    }
-    console.log(`Actualizados ${apiExecutables.length} deployments API restringidos.`);
-  } else {
-    const executable = await apiRequest(token, '/deployments', {
-      method: 'POST',
-      body: JSON.stringify({ versionNumber: version.versionNumber, manifestFileName: 'appsscript', description: versionDescription + ' (owner API)' })
-    });
-    if (!(executable.entryPoints || []).some((point) => point.entryPointType === 'EXECUTION_API')) {
-      throw new Error('El deployment API no confirmó entryPointType EXECUTION_API; no se invocará ninguna función.');
-    }
-    console.log('Creado deployment de ejecución API restringido al acceso MYSELF.');
+  // Execution API deployments are immutable in this project. Create one for
+  // each release instead of trying to update an older executable deployment.
+  const executable = await apiRequest(token, '/deployments', {
+    method: 'POST',
+    body: JSON.stringify({ versionNumber: version.versionNumber, manifestFileName: 'appsscript', description: versionDescription + ' (owner API)' })
+  });
+  if (!(executable.entryPoints || []).some((point) => point.entryPointType === 'EXECUTION_API')) {
+    throw new Error('El deployment API no confirmó entryPointType EXECUTION_API; no se invocará ninguna función.');
   }
+  console.log('Creado deployment de ejecución API restringido al acceso MYSELF.');
   console.log(`Actualizados ${deploymentIds.length} deployments web al código ${bioosVersion} (versión GAS ${version.versionNumber}).`);
 }
 

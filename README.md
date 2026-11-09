@@ -25,7 +25,7 @@ El proxy valida el secreto de Telegram antes de entregar el evento a Apps Script
 
 Los briefings AM/PM son deterministas: informan campos observados y marcan los ausentes. No generan ritmo, macros, suplementos, horario de sueño ni estado de agenda sin fuente suficiente. La frecuencia cardíaca durante ejercicio no se usa como RHR.
 
-Solo se programan briefings de mañana y noche. Auditoría semanal/ACWR y ajuste mensual quedan desprogramados hasta contar con sesiones y resultados confirmados por Alonso. Los límites de evidencia y autonomía están en [AGENTS.md](AGENTS.md).
+El código de reconciliación conserva briefings de mañana y noche y desprograma auditoría semanal/ACWR y ajuste mensual hasta contar con sesiones y resultados confirmados por Alonso. El estado de los triggers que ya existen en producción aún requiere reconciliación del runtime. Los límites de evidencia y autonomía están en [AGENTS.md](AGENTS.md).
 
 ## Sensores y límites vigentes
 
@@ -43,4 +43,4 @@ npm run check
 
 Consulta [docs/ROADMAP.md](docs/ROADMAP.md) para bloqueadores y [docs/OPERATIONS.md](docs/OPERATIONS.md) para despliegue. GitHub Actions valida cambios; los tags `vX.Y.Z` publican los deployments indicados explícitamente en el secret de release. Ningún workflow instala Health Connect ni sustituye una revisión de `/doctor`.
 
-El reporte operativo completo se puede enviar por Telegram mediante la ejecución API de Apps Script, restringida al propietario (`MYSELF`). No debe añadirse un endpoint GET público para enviar mensajes o invocar tareas internas.
+El reporte operativo completo se prepara para enviarse por Telegram mediante la ejecución API de Apps Script, restringida al propietario (`MYSELF`). La ejecución requiere que el proyecto Apps Script y el cliente OAuth compartan el mismo proyecto estándar de Google Cloud, con Apps Script API habilitada. Mientras esa vinculación no se confirme, el informe no se considera enviado. No debe añadirse un endpoint GET público para enviar mensajes o invocar tareas internas.

@@ -35,8 +35,8 @@ El adaptador no debe asignar RHR desde frecuencia cardiaca tomada durante ejerci
 ## Endurecimiento operativo v8.7.0
 
 - Health check de solo lectura; ya no crea/migra `Queue_NLP` ni cambia propiedades.
-- Triggers reconciliados a briefings AM/PM. Auditoria semanal y meta-evolucion dejan de correr hasta que haya outcomes observados.
-- Reporte integral enviado por Telegram mediante Apps Script API con acceso `MYSELF`; no expone biometria ni secretos.
+- El código reconcilia triggers a briefings AM/PM y desprograma auditoria semanal/meta-evolucion. La reconciliacion del runtime sigue pendiente porque `scripts.run` devuelve 403 por proyecto Cloud no compartido.
+- Función de reporte integral preparada para Telegram vía Apps Script API `MYSELF`; envío pendiente: Google devuelve 403 porque el cliente OAuth y el proyecto Apps Script no comparten proyecto estándar de Cloud. No expone biometría ni secretos.
 - Release actualiza los deployments web seleccionados y crea/actualiza el endpoint de ejecucion privado del propietario.
 - El puente Mi Fitness/Health Connect sigue pendiente. Los sensores no se consideran operativos en vivo hasta su instalacion y verificacion.
 

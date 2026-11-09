@@ -33,7 +33,7 @@ Configurar en GitHub Actions:
 - `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS`: ID del deployment estable que se permite actualizar.
 - Environment `production` para el job de release.
 
-El job se activa con tags `v*`, verifica el tag contra la version del codigo y solo actualiza los IDs listados. Si ya existe un API executable, lo actualiza; si no, lo crea con acceso `MYSELF`. El script de despliegue no escribe el token OAuth renovado sobre `~/.clasprc.json`.
+El job se activa con tags `v*`, verifica el tag contra la version del codigo y solo actualiza los IDs listados. Crea un deployment nuevo de ejecución API para cada versión (Google marca los deployments API como no modificables) con acceso `MYSELF`. Para invocarlo con `scripts.run`, configura el proyecto Apps Script para usar el mismo proyecto estándar de Google Cloud que el cliente OAuth, habilita Apps Script API y autoriza todos los scopes del script. Un 403 `caller does not have permission` indica que ambos proyectos Cloud no coinciden. El script de despliegue no escribe el token OAuth renovado sobre `~/.clasprc.json`.
 
 No publicar una version mientras el preflight tenga FAIL/WARN relevante o el destino estable no este identificado. El despliegue modifica el codigo GAS y la version de un deployment; no autoriza ni instala por si mismo permisos de Health Connect, no crea la app Android y no configura el proxy.
 
