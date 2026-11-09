@@ -22,12 +22,13 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     payload.semantic_memory_context = typeof Memory_searchSemantic === 'function' ? Memory_searchSemantic(memoryQuery, { topK: 6, minScore: 0.1 }) : [];
     payload.evidence_graph = typeof Memory_buildEvidenceGraph_ === 'function' ? Memory_buildEvidenceGraph_(payload.semantic_memory_context, payload.biometric_history) : { nodes: [], edges: [] };
     if (triggerEvent === 'USER_FEEDBACK') payload.agent_route = _orchestratorRouteQuestion_(payload.user_text);
+    const isHistoricalAnalytics = triggerEvent === 'USER_FEEDBACK' && !!payload.history_request;
 
     let approved = {};
     let taskCount = 0;
 
     // Para despachos periódicos (Morning/Evening), realizamos síntesis cognitiva directa unificada para latencia < 5s
-    if (triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING') {
+    if (triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING' || isHistoricalAnalytics) {
       approved = {};
     } else {
       const active = _determineActiveSpecialists(triggerEvent, rom.agent_prompts || {}, payload.agent_route);
@@ -41,6 +42,8 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     const isScheduledBriefing = triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING';
     const output = isScheduledBriefing
       ? _buildEvidenceBriefing_(triggerEvent, payload, memory)
+      : isHistoricalAnalytics
+        ? _buildHistoricalAnalyticsAnswer_(payload)
       : _synthesizeOrchestration_(rom, memory, payload, approved, taskCount, context);
     if (triggerEvent === 'USER_FEEDBACK' && typeof Memory_captureUserFeedback === 'function') {
       try { Memory_captureUserFeedback(payload.user_nlp, { requestId: context.requestId, eventId: context.eventId, observationId: payload.current_observation_id }); }
@@ -84,7 +87,11 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
   const recoveryDataComplete = hasRhr && hasSleep;
   const source = isLive ? (telemetry.source || 'fuente sin identificar') : 'sin telemetría en vivo';
   const lines = [];
-  lines.push('<b>Telemetría de hoy</b> (fuente: ' + source + '; lectura: ' + (isLive ? fetchedAt : 'no disponible') + ')');
+  var reportWindow = (payload && payload.report_window) || {};
+  var period = reportWindow.startMs ? Utilities.formatDate(new Date(reportWindow.startMs), reportWindow.timeZone || 'America/Costa_Rica', 'yyyy-MM-dd HH:mm') + ' — ' + Utilities.formatDate(new Date(reportWindow.endMs), reportWindow.timeZone || 'America/Costa_Rica', 'yyyy-MM-dd HH:mm') : 'ventana no disponible';
+  lines.push('<b>Telemetría de ' + (reportWindow.label || 'la ventana consultada') + '</b> (fuente: ' + source + '; periodo: ' + period + '; lectura: ' + (isLive ? fetchedAt : 'no disponible') + ')');
+  var sleepWindow = telemetry.sleepWindow;
+  if (sleepWindow && sleepWindow.startMs && sleepWindow.endMs) lines.push('Ventana de sueño consultada: ' + Utilities.formatDate(new Date(sleepWindow.startMs), reportWindow.timeZone || 'America/Costa_Rica', 'yyyy-MM-dd HH:mm') + ' — ' + Utilities.formatDate(new Date(sleepWindow.endMs), reportWindow.timeZone || 'America/Costa_Rica', 'yyyy-MM-dd HH:mm') + '.');
   if (!isLive) lines.push('El perfil basal es solo referencia; no representa una medición de hoy.');
   else if (!recoveryDataComplete) lines.push('Telemetría parcial: los campos ausentes no se infieren ni se sustituyen por el basal.');
   lines.push('Pasos: ' + fmt(data.steps) + (data.steps !== null && data.steps !== undefined && isFinite(Number(basal.target_steps)) ? ' (objetivo de referencia ' + basal.target_steps + ')' : ''));
@@ -100,7 +107,7 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
   lines.push(agendaLine);
 
   if (triggerEvent === 'MORNING_BRIEFING') {
-    lines.unshift('<b>Briefing matutino</b>');
+    lines.unshift('<b>Briefing matutino · resumen de la vigilia anterior + sueño previo</b>');
     if (reportedPlans.length) {
       lines.push('<b>Plan que reportaste recientemente:</b> ' + reportedPlans.join(' | '));
       lines.push('Estado: reportado hace ' + recentContext.hoursSince + ' h; es contexto tuyo, no una sesion verificada ni un entrenamiento completado.');
@@ -113,7 +120,7 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
     lines.push('<b>Nutricion:</b> no hay registro de ingesta y peso suficiente para calcular cantidades.');
     lines.push('<b>Sueno:</b> solo se reporta duracion si llego del sensor; BioOS no conoce tu hora real de acostarte.');
   } else {
-    lines.unshift('<b>Cierre de jornada</b>');
+    lines.unshift('<b>Cierre vespertino · resumen de la vigilia de hoy</b>');
     lines.push('<b>Entrenamiento:</b> BioOS no tiene una sesión completada y confirmada para esta jornada.');
     lines.push('<b>Descanso:</b> no se infiere una hora de sueño ni se recomienda un suplemento sin datos y preferencias registrados.');
     lines.push('<b>Para cerrar el registro:</b> ¿entrenaste hoy? Indica sesión y esfuerzo percibido (0-10).');
@@ -152,13 +159,13 @@ function _pickNumericValue_(candidates, min, max) {
   return null;
 }
 
-function _extractBiometricTelemetry_(rawPayload, basal) {
+function _extractBiometricTelemetry_(rawPayload, basal, requestedWindow) {
   const basalRhr = (basal && basal.baseline_rhr) || 43;
   const basalSleep = (basal && basal.target_sleep_hrs) || 7.3;
   const basalSteps = (basal && basal.target_steps) || 8000;
 
   // 1. Extraer snapshot de hardware del motor de sensores
-  const liveSnapshot = _safeETL('Sensor_Engine', typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot : null, null);
+  const liveSnapshot = _safeETL('Sensor_Engine', typeof getBiometricSnapshot === 'function' ? function () { return getBiometricSnapshot(requestedWindow); } : null, null);
   const snapData = (liveSnapshot && liveSnapshot.available && liveSnapshot.data) ? liveSnapshot.data : null;
 
   // 2. Extraer telemetría presente directamente en rawPayload (tests, sync manual, webhook biométrico)
@@ -271,13 +278,54 @@ function _extractBiometricTelemetry_(rawPayload, basal) {
   };
 }
 
+function _orchestratorReportWindow_(triggerEvent, nowMs) {
+  var dayStart = Sensor_localDayStartMs_(nowMs), previousStart = dayStart - Sensor_HOURS_24_MS;
+  return { startMs: triggerEvent === 'MORNING_BRIEFING' ? previousStart : dayStart,
+    endMs: triggerEvent === 'MORNING_BRIEFING' ? dayStart : nowMs,
+    sleepSinceMs: dayStart - 6 * 60 * 60 * 1000,
+    sleepEndMs: triggerEvent === 'MORNING_BRIEFING' ? nowMs : dayStart + 12 * 60 * 60 * 1000,
+    label: triggerEvent === 'MORNING_BRIEFING' ? 'vigilia del día anterior' : 'vigilia de hoy',
+    timeZone: 'America/Costa_Rica' };
+}
+
+function _orchestratorHistoryRequest_(question) {
+  var q = String(question || '').toLowerCase();
+  if (!/(semana pasada|ultima semana|última semana|promedio|media)/i.test(q) || !/(sueno|sueño|actividad|pasos|distancia)/i.test(q)) return null;
+  var todayStart = Sensor_localDayStartMs_(Date.now()), weekday = (new Date(todayStart).getUTCDay() + 6) % 7;
+  var monday = todayStart - weekday * Sensor_HOURS_24_MS, start = monday - 7 * Sensor_HOURS_24_MS;
+  var tz = 'America/Costa_Rica';
+  return { type: 'previous_calendar_week', startMs: start, endMs: monday,
+    startLabel: Utilities.formatDate(new Date(start), tz, 'yyyy-MM-dd'),
+    endLabel: Utilities.formatDate(new Date(monday - 1), tz, 'yyyy-MM-dd') };
+}
+
+function _buildHistoricalAnalyticsAnswer_(payload) {
+  var req = payload.history_request, result = payload.historical_biometrics || {}, days = result.days || [];
+  var average = function (key, scale) {
+    var values = days.map(function (day) { var n = day[key]; return n !== null && n !== undefined && isFinite(Number(n)) ? Number(n) / (scale || 1) : null; }).filter(function (n) { return n !== null; });
+    return { value: values.length ? values.reduce(function (a, b) { return a + b; }, 0) / values.length : null, count: values.length };
+  };
+  var sleep = average('sleepMinutes', 60), steps = average('steps'), distance = average('distanceKm');
+  var line = function (name, stat, suffix) { return name + ': ' + (stat.value === null ? 'sin datos verificables' : stat.value.toFixed(2) + suffix) + (stat.value === null ? '' : ' (n=' + stat.count + ' días con dato)'); };
+  var lines = ['<b>Resumen histórico: semana anterior</b>', 'Periodo consultado: ' + req.startLabel + ' a ' + req.endLabel + ' (America/Costa_Rica).'];
+  if (!result.available) lines.push('Google Fit no entregó una serie semanal verificable (' + _orchestratorEscapeHtml_(result.reason || 'sin detalle') + '). No completaré con cero ni con el basal.');
+  else {
+    lines.push(line('Sueño medio por noche', sleep, ' h'));
+    lines.push(line('Pasos medios por día', steps, ' pasos'));
+    lines.push(line('Distancia media por día', distance, ' km'));
+    lines.push('Cada promedio usa únicamente días en que Google Fit entregó ese campo; faltantes no cuentan como cero. Fuente: Google Fit; lectura: ' + result.fetchedAt + '.');
+  }
+  return { mensaje_telegram: lines.join('\n'), resumen_ejecutivo: 'Consulta histórica respondida con serie diaria Google Fit o declarada sin evidencia.', evidencia: result };
+}
+
 function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) {
   const payload = {};
   const nvram = (memory && memory.NVRAM) || {};
   const basal = nvram.L4_Basal || { baseline_rhr: 43, target_steps: 8000, target_sleep_hrs: 7.3 };
 
   if (triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING') {
-    payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal);
+    payload.report_window = _orchestratorReportWindow_(triggerEvent, Date.now());
+    payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal, payload.report_window);
 
     if (_orchestratorCapabilityEnabled_('WORKSPACE_CONTEXT')) {
       payload.workspace_agenda = _safeETL('Calendar_API', typeof fetchTodayCalendarEvents === 'function' ? fetchTodayCalendarEvents : null, []);
@@ -286,7 +334,13 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
   } else if (triggerEvent === 'USER_FEEDBACK') {
     payload.user_nlp = typeof compileQualitativeFeedback === 'function' ? compileQualitativeFeedback(rawPayload) : rawPayload;
     payload.user_text = _orchestratorExtractUserText_(rawPayload);
-    payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal);
+    payload.history_request = _orchestratorHistoryRequest_(payload.user_text);
+    if (!payload.history_request) payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal);
+    if (payload.history_request && typeof Sensor_GoogleFit_fetchDailyHistory_ === 'function') {
+      payload.historical_biometrics = _safeETL('GoogleFit_History', function () {
+        return Sensor_GoogleFit_fetchDailyHistory_(payload.history_request.startMs, payload.history_request.endMs);
+      }, { available: false, reason: 'HISTORY_READER_UNAVAILABLE', days: [] });
+    }
     payload.workspace_context_status = _orchestratorCapabilityEnabled_('WORKSPACE_CONTEXT') ? 'calendar_attempted_tasks_not_connected' : 'not_connected';
     if (_orchestratorCapabilityEnabled_('WORKSPACE_CONTEXT')) {
       payload.workspace_agenda = _safeETL('Calendar_API', typeof fetchTodayCalendarEvents === 'function' ? fetchTodayCalendarEvents : null, []);

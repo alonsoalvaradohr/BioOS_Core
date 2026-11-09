@@ -19,6 +19,10 @@ function Sensor_localDayStartMs_(nowMs) {
     return Date.parse(localDate + 'T00:00:00Z') - offsetMinutes * 60000;
   } catch (error) { return now - Sensor_HOURS_24_MS; }
 }
+function Sensor_localDayStartOffsetMs_(offsetDays, nowMs) {
+  var start = Sensor_localDayStartMs_(nowMs);
+  return start + (Number(offsetDays) || 0) * Sensor_HOURS_24_MS;
+}
 function Sensor_emptyData_() { return { rhrBpm: null, sleepMinutes: null, steps: null, distanceKm: null, distanceMeters: null, caloriesKcal: null }; }
 function Sensor_missingFor_(data) { return { rhrBpm: data.rhrBpm === null, sleepMinutes: data.sleepMinutes === null, steps: data.steps === null }; }
 function Sensor_snapshot(source, sinceMs, data, reason, metadata) { var normalized = Sensor_normalizeData_(data || {}), missing = Sensor_missingFor_(normalized); return { source: source, available: !reason, fetchedAt: new Date().toISOString(), sinceMs: sinceMs, data: normalized, missing: missing, degraded: !!reason || (missing.rhrBpm && missing.steps), reason: reason || null, metadata: metadata || {} }; }

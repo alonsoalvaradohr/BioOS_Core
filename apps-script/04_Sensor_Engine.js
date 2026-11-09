@@ -3,13 +3,15 @@
  * in sensors/00_Sensor_Contracts.js; callers must treat unavailable data as
  * missing rather than inventing biometric values.
  */
-function getBiometricSnapshot() {
+function getBiometricSnapshot(requestedWindow) {
   var run = function () {
     var props = PropertiesService.getScriptProperties();
     // Preserve the existing cloud path (Mobvoi/Google Fit) when no explicit provider is configured.
     var provider = String(props.getProperty('BIOOS_SENSOR_PROVIDER') || 'google_fit_legacy').trim().toLowerCase();
     var now = Date.now();
-    var options = { sinceMs: Sensor_localDayStartMs_(now), endMs: now };
+    var options = requestedWindow && typeof requestedWindow.sinceMs === 'number'
+      ? { sinceMs: requestedWindow.sinceMs, endMs: Number(requestedWindow.endMs) || now, sleepSinceMs: requestedWindow.sleepSinceMs, sleepEndMs: requestedWindow.sleepEndMs }
+      : { sinceMs: Sensor_localDayStartMs_(now), endMs: now };
     if (provider === 'mobvoi') {
       var mobvoi = Sensor_Mobvoi_fetchSnapshot(options);
       return mobvoi && mobvoi.available ? mobvoi : Sensor_GoogleFit_fetchWithFallback_(options, provider, mobvoi);

@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.10.0 - 2026-11-09
+
+- Morning briefing reports the prior local waking day and preceding night's sleep; evening briefing reports activity from the current local day. Both print their measurement window.
+- Google Fit range cache keys include activity and sleep bounds, preventing reuse of a snapshot for a different window.
+- Last-week sleep/activity questions now query daily Google Fit buckets for the prior calendar week and return averages or an explicit missing-data result instead of a generic coaching response.
+- Historical sleep segments are aligned to their waking date and unavailable values remain missing.
+
 ## 8.9.0 - 2026-11-09
 
 - Sensor activity totals now use the current local calendar day; sleep segments use the preceding 24-hour window and exclude awake/out-of-bed stages.
