@@ -32,11 +32,13 @@ Trabajo necesario para completar esa ruta:
 
 El adaptador no debe asignar RHR desde frecuencia cardiaca tomada durante ejercicio. En la exportacion revisada, los registros de RHR no estaban atribuidos a Mi Fitness; hasta encontrar una fuente RHR genuina, BioOS debe marcar RHR como no disponible.
 
-## Release automatizado
+## Endurecimiento operativo v8.7.0
 
-Para configurar el release en GitHub hacen falta los secretos `GAS_CLASPRC_JSON` y `BIOOS_GAS_DEPLOYMENT_ID`, y un environment `production`. El deployment debe ser el estable que usa el proxy/Telegram. El flujo solo avanza al crear un tag cuyo nombre coincida con `BIOOS_CONFIG.VERSION`; entonces actualiza ese deployment y deja intactos los demas.
-
-No se hizo un despliegue remoto con este cambio. Sin los secretos, la identificacion confirmada del deployment estable y el puente de datos movil, el runtime puede seguir sirviendo codigo antiguo aunque el repositorio local este corregido.
+- Health check de solo lectura; ya no crea/migra `Queue_NLP` ni cambia propiedades.
+- Triggers reconciliados a briefings AM/PM. Auditoria semanal y meta-evolucion dejan de correr hasta que haya outcomes observados.
+- Reporte integral enviado por Telegram mediante Apps Script API con acceso `MYSELF`; no expone biometria ni secretos.
+- Release actualiza los deployments web seleccionados y crea/actualiza el endpoint de ejecucion privado del propietario.
+- El puente Mi Fitness/Health Connect sigue pendiente. Los sensores no se consideran operativos en vivo hasta su instalacion y verificacion.
 
 ## Criterios para declarar el roadmap completado
 

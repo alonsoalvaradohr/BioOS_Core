@@ -8,8 +8,9 @@ if (!home) throw new Error('No se encontró el directorio del usuario.');
 const claspRcPath = path.join(home, '.clasprc.json');
 const claspConfig = JSON.parse(fs.readFileSync(path.join(root, '.clasp.json'), 'utf8'));
 const scriptId = claspConfig.scriptId;
-const deploymentId = process.env.BIOOS_GAS_DEPLOYMENT_ID;
-if (!deploymentId) throw new Error('Define BIOOS_GAS_DEPLOYMENT_ID para seleccionar explícitamente el deployment estable.');
+const deploymentIds = String(process.env.BIOOS_GAS_DEPLOYMENT_IDS || process.env.BIOOS_GAS_DEPLOYMENT_ID || '')
+  .split(',').map((value) => value.trim()).filter(Boolean);
+if (!deploymentIds.length) throw new Error('Define BIOOS_GAS_DEPLOYMENT_ID o BIOOS_GAS_DEPLOYMENT_IDS para seleccionar deployments explícitamente.');
 
 const configSource = fs.readFileSync(path.join(root, 'apps-script', '00_Sys_Config.js'), 'utf8');
 const versionMatch = configSource.match(/VERSION\s*:\s*["']([^"']+)["']/);
@@ -37,10 +38,10 @@ function collectLocalFiles(directory, baseDirectory = directory) {
       return [{ name: 'appsscript', type: 'JSON', source: fs.readFileSync(fullPath, 'utf8') }];
     }
     if (entry.name.endsWith('.js') || entry.name.endsWith('.gs')) {
-      return [{ name: relativePath.replace(/\\.(js|gs)$/, ''), type: 'SERVER_JS', source: fs.readFileSync(fullPath, 'utf8') }];
+      return [{ name: relativePath.replace(/\.(js|gs)$/, ''), type: 'SERVER_JS', source: fs.readFileSync(fullPath, 'utf8') }];
     }
     if (entry.name.endsWith('.html')) {
-      return [{ name: relativePath.replace(/\\.html$/, ''), type: 'HTML', source: fs.readFileSync(fullPath, 'utf8') }];
+      return [{ name: relativePath.replace(/\.html$/, ''), type: 'HTML', source: fs.readFileSync(fullPath, 'utf8') }];
     }
     return [];
   });
@@ -84,10 +85,10 @@ async function deploy() {
   const token = await refreshAndGetToken();
   const deploymentList = await apiRequest(token, '/deployments');
   const deployments = Array.isArray(deploymentList.deployments) ? deploymentList.deployments : [];
-  const selected = deployments.find((item) => item.deploymentId === deploymentId);
-  if (!selected) throw new Error('El deployment seleccionado no existe en el proyecto; no se subieron archivos.');
-  if (!selected.deploymentConfig || selected.deploymentConfig.versionNumber === undefined) {
-    throw new Error('El deployment seleccionado apunta a HEAD; el pipeline solo actualiza deployments versionados.');
+  const selected = deploymentIds.map((id) => deployments.find((item) => item.deploymentId === id));
+  if (selected.some((item) => !item)) throw new Error('Uno o más deployments seleccionados no existen; no se subieron archivos.');
+  if (selected.some((item) => !item.deploymentConfig || item.deploymentConfig.versionNumber === undefined)) {
+    throw new Error('Un deployment seleccionado apunta a HEAD; el pipeline solo actualiza deployments versionados.');
   }
 
   const files = collectLocalFiles(path.join(root, 'apps-script'));
@@ -98,18 +99,39 @@ async function deploy() {
   const version = await apiRequest(token, '/versions', { method: 'POST', body: JSON.stringify({ description: versionDescription }) });
   if (!version.versionNumber) throw new Error('La API no devolvió un número de versión.');
 
-  await apiRequest(token, `/deployments/${encodeURIComponent(deploymentId)}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      deploymentConfig: {
-        scriptId,
-        versionNumber: version.versionNumber,
-        description: versionDescription
-      }
-    })
-  });
-  console.log(`Deployment seleccionado actualizado a versión ${version.versionNumber} (${versionDescription}).`);
-  console.log('No se modificaron otros deployments.');
+  for (const id of deploymentIds) {
+    await apiRequest(token, `/deployments/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        deploymentConfig: {
+          scriptId,
+          versionNumber: version.versionNumber,
+          description: versionDescription
+        }
+      })
+    });
+  }
+
+  const apiExecutables = deployments.filter((item) => (item.entryPoints || []).some((point) => point.entryPointType === 'EXECUTION_API'));
+  if (apiExecutables.length) {
+    for (const executable of apiExecutables) {
+      await apiRequest(token, `/deployments/${encodeURIComponent(executable.deploymentId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ deploymentConfig: { scriptId, versionNumber: version.versionNumber, description: versionDescription + ' (owner API)' } })
+      });
+    }
+    console.log(`Actualizados ${apiExecutables.length} deployments API restringidos.`);
+  } else {
+    const executable = await apiRequest(token, '/deployments', {
+      method: 'POST',
+      body: JSON.stringify({ versionNumber: version.versionNumber, manifestFileName: 'appsscript', description: versionDescription + ' (owner API)' })
+    });
+    if (!(executable.entryPoints || []).some((point) => point.entryPointType === 'EXECUTION_API')) {
+      throw new Error('El deployment API no confirmó entryPointType EXECUTION_API; no se invocará ninguna función.');
+    }
+    console.log('Creado deployment de ejecución API restringido al acceso MYSELF.');
+  }
+  console.log(`Actualizados ${deploymentIds.length} deployments web al código ${bioosVersion} (versión GAS ${version.versionNumber}).`);
 }
 
 deploy().catch((error) => {

@@ -1,5 +1,15 @@
 # Changelog
 
+## 8.7.0 - 2026-11-09
+
+- Reconciled scheduled jobs to keep only daily morning/evening briefings; the weekly ACWR and monthly self-tuning jobs are removed from the trigger set.
+- Made the health check read-only for Queue_NLP: it reports missing/mismatched schema without creating sheets, setting properties, or migrating data.
+- Added an owner-only Apps Script API function to send a system report to the configured Telegram chat. The report includes architecture, operational check statuses, trigger count and memory structure/counts, not raw biometric values or secrets.
+- Added an `executionApi` manifest entry restricted to `MYSELF` for authenticated owner-run reporting.
+- Production rollout must update the known versioned web-app deployments so the public legacy GET actions that mutate memory/triggers or return token fragments are removed everywhere.
+
+## 8.6.0 - 2026-11-08
+
 ## 8.6.0 - 2026-11-08
 
 - Scheduled morning and evening reports now render only observed sensor fields and explicitly identify missing data; they no longer ask an LLM to invent workouts, macros, or sleep schedules.

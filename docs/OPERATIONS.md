@@ -25,15 +25,15 @@ La validacion no demuestra que sensores, VFS, proxy o Telegram funcionen en runt
 
 ## Release a GAS
 
-El deploy automatizado actualiza un solo deployment estable. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v8.6.0` para version `8.6.0`) y que `BIOOS_GAS_DEPLOYMENT_ID` apunta al deployment realmente usado por Telegram/proxy.
+El deploy automatizado actualiza únicamente los deployments explícitamente listados; admite uno o una lista CSV para cerrar deployments duplicados. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v8.7.0` para version `8.7.0`) y que `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS` apunta al deployment realmente usado por Telegram/proxy.
 
 Configurar en GitHub Actions:
 
 - `GAS_CLASPRC_JSON`: contenido de la credencial clasp con permisos de Apps Script API, guardado como secret.
-- `BIOOS_GAS_DEPLOYMENT_ID`: ID del deployment estable que se permite actualizar.
+- `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS`: ID del deployment estable que se permite actualizar.
 - Environment `production` para el job de release.
 
-El job se activa con tags `v*`, verifica el tag contra la version del codigo y no toca deployments distintos. El script de despliegue no escribe el token OAuth renovado sobre `~/.clasprc.json`.
+El job se activa con tags `v*`, verifica el tag contra la version del codigo y solo actualiza los IDs listados. Si ya existe un API executable, lo actualiza; si no, lo crea con acceso `MYSELF`. El script de despliegue no escribe el token OAuth renovado sobre `~/.clasprc.json`.
 
 No publicar una version mientras el preflight tenga FAIL/WARN relevante o el destino estable no este identificado. El despliegue modifica el codigo GAS y la version de un deployment; no autoriza ni instala por si mismo permisos de Health Connect, no crea la app Android y no configura el proxy.
 
