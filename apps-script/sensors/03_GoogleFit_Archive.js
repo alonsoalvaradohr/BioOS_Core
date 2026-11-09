@@ -36,7 +36,7 @@ function Sensor_GoogleFit_beginArchiveSync_(options) {
   catalog.lastSync = { status: 'RUNNING', startedAt: new Date().toISOString(), sinceMs: sinceMs, endMs: endMs, sourceCount: sources.length, shardsWritten: 0, pointsCopied: 0, gaps: [] };
   _bioosFitArchiveWriteCatalog_(catalog);
   var job = { schemaVersion: 1, status: 'RUNNING', mode: opts.mode || 'backfill', sinceMs: sinceMs, endMs: endMs,
-    sourceIndex: 0, sources: sources.map(_bioosFitArchiveSourceCard_), pageToken: '', retries: 0,
+    sourceIndex: 0, sources: sources.map(_bioosFitArchiveSourceCard_), pageToken: '', pageCount: 0, pagesProcessed: 0, retries: 0,
     startedAt: new Date().toISOString(), ownerChatId: String(opts.chatId || ''), shardsWritten: 0, pointsCopied: 0 };
   props.setProperty(BIOOS_FIT_ARCHIVE_JOB_KEY, JSON.stringify(job));
   _bioosFitArchiveScheduleWorker_(1000);
@@ -45,18 +45,22 @@ function Sensor_GoogleFit_beginArchiveSync_(options) {
 
 function Sensor_GoogleFit_archiveStatus_() {
   var job = _bioosFitArchiveReadJob_(), catalog = _bioosFitArchiveReadCatalog_();
-  return { job: job ? _bioosFitArchivePublicJob_(job) : null, catalog: { available: !!catalog.schemaVersion, updatedAt: catalog.updatedAt || null,
+  var workerScheduled = false;
+  try { workerScheduled = ScriptApp.getProjectTriggers().some(function(trigger) { return trigger.getHandlerFunction() === 'Sensor_GoogleFit_archiveWorker_'; }); } catch (_) {}
+  return { job: job ? _bioosFitArchivePublicJob_(job) : null, workerScheduled: workerScheduled, catalog: { available: !!catalog.schemaVersion, updatedAt: catalog.updatedAt || null,
     sourceCount: (catalog.sources || []).length, shardCount: (catalog.shards || []).length,
     pointCount: (catalog.lastSync && catalog.lastSync.pointsCopied) || 0, lastSync: catalog.lastSync || null } };
 }
 
 function Sensor_GoogleFit_pauseArchiveSync_() {
-  var job = _bioosFitArchiveReadJob_();
-  if (!job || job.status !== 'RUNNING') return { ok: true, status: job ? job.status : 'IDLE' };
-  job.status = 'PAUSED'; job.pausedAt = new Date().toISOString();
-  PropertiesService.getScriptProperties().setProperty(BIOOS_FIT_ARCHIVE_JOB_KEY, JSON.stringify(job));
-  _bioosFitArchiveDeleteWorkerTriggers_();
-  return { ok: true, job: _bioosFitArchivePublicJob_(job) };
+  return executeWithMutex('SCRIPT', function() {
+    var job = _bioosFitArchiveReadJob_();
+    if (!job || job.status !== 'RUNNING') return { ok: true, status: job ? job.status : 'IDLE' };
+    job.status = 'PAUSED'; job.pausedAt = new Date().toISOString();
+    PropertiesService.getScriptProperties().setProperty(BIOOS_FIT_ARCHIVE_JOB_KEY, JSON.stringify(job));
+    _bioosFitArchiveDeleteWorkerTriggers_();
+    return { ok: true, job: _bioosFitArchivePublicJob_(job) };
+  });
 }
 
 /** One page per invocation: bounded execution, atomic cursor, idempotent Drive shard. */
@@ -67,6 +71,9 @@ function Sensor_GoogleFit_archiveWorker_() {
     if (!job || job.status !== 'RUNNING') return { status: job ? job.status : 'IDLE' };
     if (job.sourceIndex >= job.sources.length) return _bioosFitArchiveComplete_(job);
     var source = job.sources[job.sourceIndex];
+    job.currentDataType = (source.dataType || {}).name || 'unknown';
+    job.lastAttemptAt = new Date().toISOString();
+    _bioosFitArchiveSaveJob_(job);
     var response = _bioosFitArchiveFetchDataset_(source.dataStreamId, job.sinceMs, job.endMs, job.pageToken);
     if (!response.ok) {
       if (response.httpStatus === 401) { job.status = 'AUTH_REQUIRED'; job.lastError = response.reason; _bioosFitArchiveSaveJob_(job); _bioosFitArchiveNotify_(job, 'La lectura Google Fit requiere revisar autorización; conservé el cursor para reanudar.'); return { status: job.status, reason: response.reason }; }
@@ -80,6 +87,8 @@ function Sensor_GoogleFit_archiveWorker_() {
       _bioosFitArchiveAdvanceSource_(job);
     } else {
       job.retries = 0; job.lastError = '';
+      job.pagesProcessed = Number(job.pagesProcessed || 0) + 1;
+      job.lastProgressAt = new Date().toISOString();
       var points = response.dataset.point || [];
       if (points.length) {
         var shard = _bioosFitArchiveWriteShard_(source, job, response.dataset);
@@ -255,8 +264,10 @@ function _bioosFitArchiveAdvanceSource_(job) { job.sourceIndex++; job.pageToken 
 function _bioosFitArchiveSaveJob_(job) { PropertiesService.getScriptProperties().setProperty(BIOOS_FIT_ARCHIVE_JOB_KEY, JSON.stringify(job)); }
 function _bioosFitArchiveReadJob_() { try { var raw = PropertiesService.getScriptProperties().getProperty(BIOOS_FIT_ARCHIVE_JOB_KEY); return raw ? JSON.parse(raw) : null; } catch (_) { return null; } }
 function _bioosFitArchiveSourceCard_(source) { return { dataStreamId: String(source.dataStreamId || ''), dataType: source.dataType || {}, type: source.type || '', device: source.device || null, application: source.application || null }; }
-function _bioosFitArchivePublicJob_(job) { return { status: job.status, mode: job.mode, startedAt: job.startedAt, sourceIndex: job.sourceIndex, sourceCount: (job.sources || []).length,
-  shardsWritten: job.shardsWritten || 0, pointsCopied: job.pointsCopied || 0, since: new Date(job.sinceMs).toISOString(), until: new Date(job.endMs).toISOString(), lastError: job.lastError || null }; }
+function _bioosFitArchivePublicJob_(job) { var current = (job.sources || [])[job.sourceIndex]; return { status: job.status, mode: job.mode, startedAt: job.startedAt, sourceIndex: job.sourceIndex, sourceCount: (job.sources || []).length,
+  currentDataType: job.currentDataType || (current && current.dataType && current.dataType.name) || null, pagesProcessed: job.pagesProcessed || 0,
+  shardsWritten: job.shardsWritten || 0, pointsCopied: job.pointsCopied || 0, lastAttemptAt: job.lastAttemptAt || null, lastProgressAt: job.lastProgressAt || null,
+  since: new Date(job.sinceMs).toISOString(), until: new Date(job.endMs).toISOString(), lastError: job.lastError || null }; }
 function _bioosFitArchiveUpdateCatalogProgress_(job) { var catalog = _bioosFitArchiveReadCatalog_(); if (!catalog.lastSync) catalog.lastSync = {}; catalog.lastSync.status = job.status; catalog.lastSync.sourceIndex = job.sourceIndex; catalog.lastSync.shardsWritten = job.shardsWritten; catalog.lastSync.pointsCopied = job.pointsCopied; catalog.lastSync.updatedAt = new Date().toISOString(); _bioosFitArchiveWriteCatalog_(catalog); }
 function _bioosFitArchiveComplete_(job) {
   job.status = 'COMPLETE'; job.completedAt = new Date().toISOString(); _bioosFitArchiveSaveJob_(job);

@@ -395,8 +395,10 @@ function _handleBypassCommand(command, sourceChatId) {
         const status = Sensor_GoogleFit_archiveStatus_(), job = status.job, c = status.catalog;
         const text = '<b>Archivo histórico Google Fit · Drive</b>\nEstado: ' + _orchestratorEscapeHtml_((job && job.status) || (c.lastSync && c.lastSync.status) || 'NO INICIADO') +
           '\nFuentes catalogadas: ' + c.sourceCount + ' · shards: ' + c.shardCount + ' · puntos copiados: ' + c.pointCount +
-          (job ? '\nProgreso: ' + Math.min(job.sourceIndex, job.sourceCount) + '/' + job.sourceCount + ' fuentes · ventana ' + job.since.slice(0, 10) + ' → ' + job.until.slice(0, 10) : '') +
-          '\nHuecos/permisos: ' + ((c.lastSync && c.lastSync.gaps) ? c.lastSync.gaps.length : 0) + '. Usa <code>/syncfit</code> para iniciar o <code>/syncfit pausa</code> para pausar.';
+          (job ? '\nFuentes terminadas: ' + Math.min(job.sourceIndex, job.sourceCount) + '/' + job.sourceCount + ' · páginas leídas: ' + job.pagesProcessed + ' · fuente actual: ' + _orchestratorEscapeHtml_(job.currentDataType || 'pendiente') +
+            '\nÚltimo intento: ' + (job.lastAttemptAt || 'aún no iniciado') + ' · último avance: ' + (job.lastProgressAt || 'aún no hay página confirmada') +
+            '\nWorker programado: ' + (status.workerScheduled ? 'sí' : 'no') + ' · ventana ' + job.since.slice(0, 10) + ' → ' + job.until.slice(0, 10) : '') +
+          '\nHuecos/permisos: ' + ((c.lastSync && c.lastSync.gaps) ? c.lastSync.gaps.length : 0) + '. Usa <code>/syncfit</code> para iniciar o reanudar; <code>/syncfit pausa</code> para pausar.';
         if (typeof _rawSystemNotify === 'function') _rawSystemNotify(text, sourceChatId);
         return;
       }

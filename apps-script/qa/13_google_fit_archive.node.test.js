@@ -42,5 +42,20 @@ if (typeof require !== 'undefined') {
   assert.equal(gapped.completeCoverage, false);
   const outsideGap = context.Sensor_GoogleFit_queryArchiveStats_({ dataTypeName: 'com.google.step_count.cadence', startMs: 3000, endMs: 5000 });
   assert.equal(outsideGap.state, 'OBSERVED', 'a gap must not poison unrelated time windows');
-  console.log('PASS Google Fit archive coverage, exact stats, and time-bounded access gaps');
+  const publicJob = context._bioosFitArchivePublicJob_({ status: 'RUNNING', sourceIndex: 0, sources: [{ dataType: { name: 'com.google.step_count.delta' } }], sinceMs: 0, endMs: 1000, pagesProcessed: 5, lastProgressAt: '2026-11-09T12:00:00.000Z' });
+  assert.equal(publicJob.pagesProcessed, 5, 'status should expose page progress while current sourceIndex remains zero');
+  assert.equal(publicJob.currentDataType, 'com.google.step_count.delta');
+
+  let activeJob = { status: 'RUNNING', sinceMs: 0, endMs: 1000, sources: [], sourceIndex: 0 };
+  let lockUsed = false, triggerDeleted = false;
+  context.executeWithMutex = (_name, fn) => { lockUsed = true; return fn(); };
+  context._bioosFitArchiveReadJob_ = () => activeJob;
+  context.PropertiesService = { getScriptProperties: () => ({ setProperty: (_key, value) => { activeJob = JSON.parse(value); } }) };
+  context._bioosFitArchiveDeleteWorkerTriggers_ = () => { triggerDeleted = true; };
+  const pause = context.Sensor_GoogleFit_pauseArchiveSync_();
+  assert.equal(pause.job.status, 'PAUSED');
+  assert.equal(activeJob.status, 'PAUSED');
+  assert.equal(lockUsed, true, 'pause must serialize with worker execution');
+  assert.equal(triggerDeleted, true, 'pause removes any pending worker trigger');
+  console.log('PASS archive coverage, exact stats, page status, and serialized pause');
 }

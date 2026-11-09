@@ -17,7 +17,7 @@ function _deepFreeze_(value) {
 }
 
 const BIOOS_CONFIG = _deepFreeze_({
-  VERSION: "8.15.0",
+  VERSION: "8.15.1",
   RELEASE_CHANNEL: "production",
 
   // Capabilities are source-controlled and fail closed. Enabling one may also

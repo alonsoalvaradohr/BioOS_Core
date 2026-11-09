@@ -1,5 +1,11 @@
 # Changelog
 
+## 8.15.1 - 2026-11-09
+
+- Archive status reports pages processed, current source type, last attempt/progress and whether a worker trigger is pending; source completion no longer hides page-level progress.
+- Pausing now serializes with the active archive worker so a just-finished page cannot overwrite `PAUSED` and schedule another trigger.
+- The private `BioOS_Fit_Archive/` Drive folder is excluded from Git to prevent raw health exports from entering commits.
+
 ## 8.15.0 - 2026-11-09
 
 - Adds `/syncfit` to copy paginated Google Fit data source datasets into resumable gzip shards in the owner's BioOS Drive, with a Drive catalog, checksums, cursors, status, pause/resume and daily incremental sync.
