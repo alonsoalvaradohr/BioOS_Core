@@ -23,7 +23,7 @@ El proxy valida el secreto de Telegram antes de entregar el evento a Apps Script
 
 ## Evidencia y automatización
 
-Los briefings AM/PM son deterministas: informan campos observados y marcan los ausentes. No generan ritmo, macros, suplementos, horario de sueño ni estado de agenda sin fuente suficiente. La frecuencia cardíaca durante ejercicio no se usa como RHR.
+Los briefings AM/PM son deterministas: informan campos observados y marcan los ausentes. El briefing matutino reutiliza una intención de entrenamiento que el usuario haya reportado recientemente en L1, siempre marcada como reportada y no verificada. No genera ritmo, macros, suplementos, horario de sueño ni estado de agenda sin fuente suficiente. La frecuencia cardíaca durante ejercicio no se usa como RHR.
 
 El código de reconciliación conserva briefings de mañana y noche y desprograma auditoría semanal/ACWR y ajuste mensual hasta contar con sesiones y resultados confirmados por Alonso. El estado de los triggers que ya existen en producción aún requiere reconciliación del runtime. Los límites de evidencia y autonomía están en [AGENTS.md](AGENTS.md).
 

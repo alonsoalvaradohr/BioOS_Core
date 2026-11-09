@@ -32,13 +32,14 @@ Trabajo necesario para completar esa ruta:
 
 El adaptador no debe asignar RHR desde frecuencia cardiaca tomada durante ejercicio. En la exportacion revisada, los registros de RHR no estaban atribuidos a Mi Fitness; hasta encontrar una fuente RHR genuina, BioOS debe marcar RHR como no disponible.
 
-## Endurecimiento operativo v8.7.0
+## Endurecimiento operativo v8.7.1
 
 - Health check de solo lectura; ya no crea/migra `Queue_NLP` ni cambia propiedades.
 - El código reconcilia triggers a briefings AM/PM y desprograma auditoria semanal/meta-evolucion. La reconciliacion del runtime sigue pendiente porque `scripts.run` devuelve 403 por proyecto Cloud no compartido.
 - Función de reporte integral preparada para Telegram vía Apps Script API `MYSELF`; envío pendiente: Google devuelve 403 porque el cliente OAuth y el proyecto Apps Script no comparten proyecto estándar de Cloud. No expone biometría ni secretos.
 - Release actualiza los deployments web seleccionados y crea/actualiza el endpoint de ejecucion privado del propietario.
 - El puente Mi Fitness/Health Connect sigue pendiente. Los sensores no se consideran operativos en vivo hasta su instalacion y verificacion.
+- El briefing matutino lee intenciones recientes reportadas en L1, las distingue de una sesión verificada y explicita que el perfil basal no es telemetría del día.
 
 ## Criterios para declarar el roadmap completado
 

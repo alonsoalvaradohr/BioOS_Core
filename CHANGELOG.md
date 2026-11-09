@@ -1,5 +1,10 @@
 # Changelog
 
+## 8.7.1 - 2026-11-09
+
+- Morning briefings now read recent user-reported training intent from L1 working memory, label it as reported rather than verified, and avoid asking for the same plan again when one was recently supplied.
+- Sensorless briefings now identify telemetry as unavailable and state that basal profile values are not today's measurements.
+
 ## 8.7.0 - 2026-11-09
 
 - Changed trigger reconciliation to keep only daily morning/evening briefings and remove weekly ACWR/monthly self-tuning jobs. The production trigger list still requires a runtime reconciliation.

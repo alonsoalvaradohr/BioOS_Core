@@ -25,7 +25,7 @@ La validacion no demuestra que sensores, VFS, proxy o Telegram funcionen en runt
 
 ## Release a GAS
 
-El deploy automatizado actualiza únicamente los deployments explícitamente listados; admite uno o una lista CSV para cerrar deployments duplicados. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v8.7.0` para version `8.7.0`) y que `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS` apunta al deployment realmente usado por Telegram/proxy.
+El deploy automatizado actualiza únicamente los deployments explícitamente listados; admite uno o una lista CSV para cerrar deployments duplicados. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v8.7.1` para version `8.7.1`) y que `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS` apunta al deployment realmente usado por Telegram/proxy.
 
 Configurar en GitHub Actions:
 

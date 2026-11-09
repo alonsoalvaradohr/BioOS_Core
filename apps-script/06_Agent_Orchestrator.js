@@ -52,13 +52,20 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
   const telemetry = (payload && payload.biometric_telemetry) || {};
   const data = telemetry.data || {};
   const basal = (((memory || {}).NVRAM || {}).L4_Basal) || {};
+  const sessionEvents = (((memory || {}).NVRAM || {}).L1_Working || {}).session_events || [];
+  const recentContext = _extractL1CognitiveContext(sessionEvents, 24);
+  const reportedPlans = triggerEvent === 'MORNING_BRIEFING'
+    ? recentContext.details.intenciones.filter(_isReportedTrainingIntent_).slice(0, 3)
+    : [];
   const fmt = function(value, suffix) {
     return value === null || value === undefined || value === '' ? 'sin dato' : String(value) + (suffix || '');
   };
   const fetchedAt = telemetry.fetchedAt ? String(telemetry.fetchedAt) : 'no disponible';
-  const source = telemetry.source || 'sin fuente confirmada';
+  const isLive = telemetry.is_live_telemetry === true;
+  const source = isLive ? (telemetry.source || 'fuente sin identificar') : 'sin telemetría en vivo';
   const lines = [];
-  lines.push('<b>Datos observados</b> (fuente: ' + source + '; lectura: ' + fetchedAt + ')');
+  lines.push('<b>Telemetría de hoy</b> (fuente: ' + source + '; lectura: ' + (isLive ? fetchedAt : 'no disponible') + ')');
+  if (!isLive) lines.push('El perfil basal es solo referencia; no representa una medición de hoy.');
   lines.push('Pasos: ' + fmt(data.steps) + (data.steps !== null && data.steps !== undefined && isFinite(Number(basal.target_steps)) ? ' (objetivo de referencia ' + basal.target_steps + ')' : ''));
   lines.push('Distancia: ' + fmt(data.distanceKm, ' km'));
   lines.push('Energía: ' + fmt(data.caloriesKcal, ' kcal'));
@@ -73,10 +80,16 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
 
   if (triggerEvent === 'MORNING_BRIEFING') {
     lines.unshift('<b>Briefing matutino</b>');
-    lines.push('<b>Entrenamiento:</b> no hay una sesión planificada y verificada en BioOS; no emitiré distancia, ritmo ni intensidad.');
-    lines.push('<b>Nutrición:</b> no hay registro de ingesta y peso suficiente para calcular cantidades.');
-    lines.push('<b>Sueño:</b> solo se reporta duración si llegó del sensor; BioOS no conoce tu hora real de acostarte.');
-    lines.push('<b>Para completar el contexto:</b> ¿qué sesión planeas hoy y cómo están fatiga y molestias?');
+    if (reportedPlans.length) {
+      lines.push('<b>Plan que reportaste recientemente:</b> ' + reportedPlans.join(' | '));
+      lines.push('Estado: reportado hace ' + recentContext.hoursSince + ' h; es contexto tuyo, no una sesion verificada ni un entrenamiento completado.');
+      lines.push('Confirma si sigue vigente o responde con el cambio; indica tambien fatiga/molestias si hace falta.');
+    } else {
+      lines.push('<b>Entrenamiento:</b> no encontre un plan reciente tuyo en la memoria de trabajo; no emitire distancia, ritmo ni intensidad.');
+      lines.push('<b>Para completar el contexto:</b> responde con la sesion que planeas hoy y, si puedes, fatiga y molestias. BioOS la guardara como reportada, no como verificada.');
+    }
+    lines.push('<b>Nutricion:</b> no hay registro de ingesta y peso suficiente para calcular cantidades.');
+    lines.push('<b>Sueno:</b> solo se reporta duracion si llego del sensor; BioOS no conoce tu hora real de acostarte.');
   } else {
     lines.unshift('<b>Cierre de jornada</b>');
     lines.push('<b>Entrenamiento:</b> BioOS no tiene una sesión completada y confirmada para esta jornada.');
@@ -89,6 +102,10 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
     resumen_ejecutivo: 'Briefing determinista basado en telemetría disponible; no se generaron prescripciones sin evidencia.',
     evidencia: { source: source, fetchedAt: fetchedAt, metrics: data }
   };
+}
+
+function _isReportedTrainingIntent_(text) {
+  return typeof text === 'string' && /\b(correr|carrera|rodaje|trotar|trote|running|run|bicicleta|bici|fuerza|pesas|gimnasio|entrenamiento|entrenar|natacion|movilidad|descanso|series|intervalos|caminar|caminata)\b/i.test(text);
 }
 
 function _orchestratorContext_(triggerEvent, rawPayload, supplied) {
@@ -216,7 +233,7 @@ function _extractBiometricTelemetry_(rawPayload, basal) {
     origin: "[BASAL_NOMINAL]",
     is_live_telemetry: false,
     sensor_status: "CEGUERA_SENSORIAL_ACTIVA",
-    source: "Digital_Twin_Basal_Reference",
+    source: "Sin telemetria en vivo",
     reference_baseline: {
       nominal_rhr_bpm: basalRhr,
       nominal_sleep_hrs: basalSleep,
