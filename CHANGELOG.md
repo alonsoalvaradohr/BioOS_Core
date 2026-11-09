@@ -1,5 +1,11 @@
 # Changelog
 
+## 8.8.1 - 2026-11-09
+
+- Fixed sensor normalization so absent `null` values remain missing instead of becoming false zero readings.
+- Cached successful Google Fit snapshots for ten minutes so `/doctor`, `/memoria`, and briefings reuse the same recent measurement inside the API cooldown.
+- `/doctor` now reports received metric fields, renders zero distance/sleep as unavailable, and distinguishes synced history from a live heart-rate stream.
+
 ## 8.8.0 - 2026-11-09
 
 - Restored the existing Google Fit REST path as failover when Health Connect has no Android bridge and when Mobvoi is unavailable; `/doctor` remains the live validation and no Fit response is assumed.

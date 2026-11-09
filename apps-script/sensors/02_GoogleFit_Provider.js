@@ -3,10 +3,36 @@ function Sensor_GoogleFit_fetchFallback(options) {
   var sinceMs = options && typeof options.sinceMs === 'number' ? options.sinceMs : Date.now() - Sensor_HOURS_24_MS;
   try {
     var props = PropertiesService.getScriptProperties(), now = Date.now(), last = Number(props.getProperty('SENSOR_GOOGLE_FIT_LAST_ATTEMPT_MS') || 0);
-    if (last && now - last < Sensor_GOOGLE_FIT_FALLBACK_MS) return Sensor_unavailableSnapshot('google_fit', 'GOOGLE_FIT_RATE_LIMITED', { retryAfterMs: Sensor_GOOGLE_FIT_FALLBACK_MS - (now - last), lastAttemptMs: last });
+    if (last && now - last < Sensor_GOOGLE_FIT_FALLBACK_MS) {
+      var cached = Sensor_GoogleFit_readCachedSnapshot_();
+      if (cached) {
+        cached.metadata = cached.metadata || {};
+        cached.metadata.cacheHit = true;
+        cached.metadata.cacheAgeMs = Math.max(0, now - Date.parse(cached.fetchedAt));
+        return cached;
+      }
+      return Sensor_unavailableSnapshot('google_fit', 'GOOGLE_FIT_RATE_LIMITED', { retryAfterMs: Sensor_GOOGLE_FIT_FALLBACK_MS - (now - last), lastAttemptMs: last });
+    }
     props.setProperty('SENSOR_GOOGLE_FIT_LAST_ATTEMPT_MS', String(now));
-    return Sensor_GoogleFit_fetchSnapshot_({ sinceMs: sinceMs, endMs: now });
+    var snapshot = Sensor_GoogleFit_fetchSnapshot_({ sinceMs: sinceMs, endMs: now });
+    if (snapshot && snapshot.available) Sensor_GoogleFit_cacheSnapshot_(snapshot);
+    return snapshot;
   } catch (error) { Sensor_logWarning_('[SENSOR] Google Fit unavailable: ' + Sensor_safeError_(error)); return Sensor_unavailableSnapshot('google_fit', 'GOOGLE_FIT_REQUEST_FAILED', { error: Sensor_safeError_(error) }); }
+}
+function Sensor_GoogleFit_readCachedSnapshot_() {
+  try {
+    if (typeof CacheService === 'undefined') return null;
+    var raw = CacheService.getScriptCache().get('BIOOS_GOOGLE_FIT_SNAPSHOT_V1');
+    if (!raw) return null;
+    var snapshot = JSON.parse(raw);
+    return snapshot && snapshot.source === 'google_fit' && snapshot.available && snapshot.data ? snapshot : null;
+  } catch (error) { Sensor_logWarning_('[SENSOR] Google Fit cache read failed: ' + Sensor_safeError_(error)); return null; }
+}
+function Sensor_GoogleFit_cacheSnapshot_(snapshot) {
+  try {
+    if (typeof CacheService === 'undefined') return;
+    CacheService.getScriptCache().put('BIOOS_GOOGLE_FIT_SNAPSHOT_V1', JSON.stringify(snapshot), 600);
+  } catch (error) { Sensor_logWarning_('[SENSOR] Google Fit cache write failed: ' + Sensor_safeError_(error)); }
 }
 function Sensor_GoogleFit_fetchSnapshot_(range) {
   if (typeof ScriptApp === 'undefined' || typeof UrlFetchApp === 'undefined') return Sensor_unavailableSnapshot('google_fit', 'GOOGLE_FIT_UNSUPPORTED_RUNTIME', {});

@@ -448,10 +448,13 @@ function _diagnoseSensorsLive_(sourceChatId) {
     lines.push('Lectura consultada: ' + ((snap && snap.fetchedAt) || 'sin marca de tiempo'));
     lines.push('Estado del proveedor: ' + ((snap && snap.available) ? 'consulta disponible' : ((snap && snap.reason) || 'sin datos')));
     lines.push('Pasos: ' + (data.steps === null || data.steps === undefined ? 'sin dato' : Number(data.steps).toLocaleString()));
-    lines.push('Distancia: ' + (data.distanceKm === null || data.distanceKm === undefined ? 'sin dato' : data.distanceKm + ' km'));
+    lines.push('Distancia: ' + (data.distanceKm === null || data.distanceKm === undefined || data.distanceKm <= 0 ? 'sin dato' : data.distanceKm + ' km'));
     lines.push('Energ?a: ' + (data.caloriesKcal === null || data.caloriesKcal === undefined ? 'sin dato' : data.caloriesKcal + ' kcal'));
     lines.push('Frecuencia card?aca en reposo: ' + (data.rhrBpm === null || data.rhrBpm === undefined ? 'sin dato v?lido' : data.rhrBpm + ' bpm'));
-    lines.push('Sue?o: ' + (data.sleepMinutes === null || data.sleepMinutes === undefined ? 'sin dato' : (data.sleepMinutes / 60).toFixed(1) + ' h'));
+    lines.push('Sue?o: ' + (data.sleepMinutes === null || data.sleepMinutes === undefined || data.sleepMinutes <= 0 ? 'sin dato' : (data.sleepMinutes / 60).toFixed(1) + ' h'));
+    const received = ['steps', 'distanceKm', 'caloriesKcal', 'rhrBpm', 'sleepMinutes'].filter(function(key) { return data[key] !== null && data[key] !== undefined && data[key] > 0; });
+    lines.push('Campos recibidos: ' + (received.length ? received.join(', ') : 'ninguno'));
+    lines.push('Pulso actual en vivo: no disponible por esta ruta cloud; RHR solo si el proveedor lo sincroniza explícitamente.');
   } catch (error) {
     lines.push('Lectura fallida: ' + String(error && error.message || error).slice(0, 180));
   }

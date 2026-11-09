@@ -21,7 +21,13 @@ function Sensor_normalizeData_(input) {
   out.caloriesKcal = Sensor_numberInRange_(v.caloriesKcal, 0, 50000);
   return out;
 }
-function Sensor_numberInRange_(value, min, max) { var n = typeof value === 'number' ? value : Number(value); return isFinite(n) && n >= min && n <= max ? n : null; }
+function Sensor_numberInRange_(value, min, max) {
+  // Number(null) is 0 in JavaScript. Preserve missing telemetry as null instead
+  // of silently turning every absent metric into a measured zero.
+  if (value === null || value === undefined || value === '') return null;
+  var n = typeof value === 'number' ? value : Number(value);
+  return isFinite(n) && n >= min && n <= max ? n : null;
+}
 function Sensor_logWarning_(message) { if (typeof sendSystemTelemetry === 'function') sendSystemTelemetry('WARNING', message); }
 function Sensor_safeError_(error) { return String(error && error.message || error || 'unknown').slice(0, 300); }
 function Sensor_isHttpsUrl_(value) { return typeof value === 'string' && /^https:\/\/[^\s/?#]+(?:[/?#]|$)/i.test(value); }
