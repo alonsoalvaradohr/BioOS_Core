@@ -180,3 +180,15 @@ Para validar cambios localmente, consulta `docs/OPERATIONS.md`. Un despliegue GA
 ## 7. Aviso de Responsabilidad y Privacidad
 
 BioOS es un sistema autónomo experimental de apoyo cognitivo y optimización de rendimiento deportivo. No prescribe fármacos ni sustituye el criterio médico clínico. Todos los datos biométricos y de agenda residen exclusivamente dentro de la infraestructura privada de Google Drive y Google Cloud del usuario.
+
+## Second Brain harness
+
+Lee primero [AGENTS.md](AGENTS.md). Para recuperar contexto, crear tickets y comprobar su alcance:
+
+```powershell
+npm run harness -- context
+npm run ticket -- new BIOOS-YYYYMMDD-01 --title "Meta observable"
+npm run ticket -- check BIOOS-YYYYMMDD-01
+```
+
+El mapa de memoria, las reglas de evidencia y el ciclo completo están en [docs/agent-harness/README.md](docs/agent-harness/README.md). El harness distingue código local de runtime y bloquea cambios fuera del alcance del ticket.

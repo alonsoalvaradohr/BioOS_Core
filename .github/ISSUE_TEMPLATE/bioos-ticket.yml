@@ -1,0 +1,40 @@
+﻿name: BioOS work item
+description: One observable outcome, one bounded ticket
+title: "[BIOOS] "
+labels: ["bioos-ticket"]
+body:
+  - type: input
+    id: outcome
+    attributes:
+      label: Observable outcome
+      description: What will Alonso see when this is complete?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Current evidence
+      description: Include source, timestamp and units; say unknown where no data exists.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope in / scope out
+      description: List allowed files and excluded files or external actions.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable, falsifiable checkboxes.
+    validations:
+      required: true
+  - type: textarea
+    id: risk
+    attributes:
+      label: Validation, risk and rollback
+      description: Commands, runtime limitations and recovery plan.
+    validations:
+      required: true

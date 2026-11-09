@@ -1,18 +1,20 @@
-{
-    "name":  "bioos-core",
-    "version":  "8.6.0",
-    "private":  true,
-    "description":  "Kernel cognitivo y canal de ingesta BioOS sobre Google Apps Script.",
-    "scripts":  {
-                    "check":  "node scripts/validate.mjs",
-                    "audit":  "node scripts/audit-state.mjs",
-                    "test":  "node --test apps-script/qa/*.node.test.js",
-                    "verify":  "npm run check \u0026\u0026 npm test",
-                    "deploy":  "npm run check \u0026\u0026 node scripts/deploy-gas.mjs",
-                    "test:e2e":  "node scripts/black-box-test.mjs",
-                    "clasp:status":  "clasp status"
-                },
-    "engines":  {
-                    "node":  "\u003e=20"
-                }
+﻿{
+  "name": "bioos-core",
+  "version": "8.6.0",
+  "private": true,
+  "description": "Kernel cognitivo y canal de ingesta BioOS sobre Google Apps Script.",
+  "scripts": {
+    "check": "node scripts/validate.mjs",
+    "audit": "node scripts/audit-state.mjs",
+    "test": "node --test apps-script/qa/*.node.test.js",
+    "verify": "npm run check && npm test",
+    "deploy": "npm run check && node scripts/deploy-gas.mjs",
+    "test:e2e": "node scripts/black-box-test.mjs",
+    "clasp:status": "clasp status",
+    "harness": "node scripts/bioos-harness.mjs",
+    "ticket": "node scripts/bioos-harness.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }
