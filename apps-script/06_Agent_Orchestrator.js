@@ -17,12 +17,7 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
 
     // Para despachos periódicos (Morning/Evening), realizamos síntesis cognitiva directa unificada para latencia < 5s
     if (triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING') {
-      const active = _determineActiveSpecialists(triggerEvent, rom.agent_prompts || {});
-      // Inyectamos las perspectivas especializadas en el contexto cognitivo sin llamadas de red redundantes
       approved = {};
-      Object.keys(active).slice(0, 2).forEach(function(key) {
-        approved[key] = { role: key, ready: true, tareas_ejecutivas: [] };
-      });
     } else {
       const active = _determineActiveSpecialists(triggerEvent, rom.agent_prompts || {});
       const responses = _invokeSpecialistsCluster(active, payload, context);
@@ -30,7 +25,12 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
       taskCount = _injectAuditedTasks_(approved, context);
     }
 
-    const output = _synthesizeOrchestration_(rom, memory, payload, approved, taskCount, context);
+    // Scheduled reports are deterministic. An LLM may assist with user requests,
+    // but must not turn partial sensor data into invented workouts, macros, or sleep times.
+    const isScheduledBriefing = triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING';
+    const output = isScheduledBriefing
+      ? _buildEvidenceBriefing_(triggerEvent, payload, memory)
+      : _synthesizeOrchestration_(rom, memory, payload, approved, taskCount, context);
     let compact = false;
     if (typeof ingestWorkingMemory === 'function') try {
       compact = ingestWorkingMemory(triggerEvent, { tokens: payload, hipotesis: approved, sintesis: output.resumen_ejecutivo || 'Sin síntesis.', requestId: context.requestId, eventId: context.eventId });
@@ -46,6 +46,49 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     _orchestratorTelemetry_(context, delivered ? 'SUCCESS' : 'WARNING', delivered ? '[ORCHESTRATOR] Ciclo completado y notificado.' : '[ORCHESTRATOR] Ciclo procesado pero notificación no entregada.', { triggerEvent: triggerEvent, injectedTasksCount: taskCount, delivered: delivered });
     return delivered;
   });
+}
+
+function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
+  const telemetry = (payload && payload.biometric_telemetry) || {};
+  const data = telemetry.data || {};
+  const basal = (((memory || {}).NVRAM || {}).L4_Basal) || {};
+  const fmt = function(value, suffix) {
+    return value === null || value === undefined || value === '' ? 'sin dato' : String(value) + (suffix || '');
+  };
+  const fetchedAt = telemetry.fetchedAt ? String(telemetry.fetchedAt) : 'no disponible';
+  const source = telemetry.source || 'sin fuente confirmada';
+  const lines = [];
+  lines.push('<b>Datos observados</b> (fuente: ' + source + '; lectura: ' + fetchedAt + ')');
+  lines.push('Pasos: ' + fmt(data.steps) + (data.steps !== null && data.steps !== undefined && isFinite(Number(basal.target_steps)) ? ' (objetivo de referencia ' + basal.target_steps + ')' : ''));
+  lines.push('Distancia: ' + fmt(data.distanceKm, ' km'));
+  lines.push('Energía: ' + fmt(data.caloriesKcal, ' kcal'));
+  lines.push('Frecuencia cardíaca en reposo: ' + fmt(data.rhrBpm, ' bpm'));
+  lines.push('Sueño: ' + fmt(data.sleepHours, ' h'));
+
+  const agenda = payload && payload.workspace_agenda;
+  const agendaLine = _orchestratorCapabilityEnabled_('WORKSPACE_CONTEXT')
+    ? (Array.isArray(agenda) ? 'Agenda: consulta habilitada; ' + agenda.length + ' entradas recibidas (connector result is not verified).' : 'Agenda: consulta no disponible.')
+    : 'Agenda: integración no conectada.';
+  lines.push(agendaLine);
+
+  if (triggerEvent === 'MORNING_BRIEFING') {
+    lines.unshift('<b>Briefing matutino</b>');
+    lines.push('<b>Entrenamiento:</b> no hay una sesión planificada y verificada en BioOS; no emitiré distancia, ritmo ni intensidad.');
+    lines.push('<b>Nutrición:</b> no hay registro de ingesta y peso suficiente para calcular cantidades.');
+    lines.push('<b>Sueño:</b> solo se reporta duración si llegó del sensor; BioOS no conoce tu hora real de acostarte.');
+    lines.push('<b>Para completar el contexto:</b> ¿qué sesión planeas hoy y cómo están fatiga y molestias?');
+  } else {
+    lines.unshift('<b>Cierre de jornada</b>');
+    lines.push('<b>Entrenamiento:</b> BioOS no tiene una sesión completada y confirmada para esta jornada.');
+    lines.push('<b>Descanso:</b> no se infiere una hora de sueño ni se recomienda un suplemento sin datos y preferencias registrados.');
+    lines.push('<b>Para cerrar el registro:</b> ¿entrenaste hoy? Indica sesión y esfuerzo percibido (0-10).');
+  }
+
+  return {
+    mensaje_telegram: lines.join('\n'),
+    resumen_ejecutivo: 'Briefing determinista basado en telemetría disponible; no se generaron prescripciones sin evidencia.',
+    evidencia: { source: source, fetchedAt: fetchedAt, metrics: data }
+  };
 }
 
 function _orchestratorContext_(triggerEvent, rawPayload, supplied) {

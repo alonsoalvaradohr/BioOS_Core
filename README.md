@@ -1,9 +1,9 @@
-# BioOS Core v5.3.2 (Autonomous Cognitive Kernel)
+# BioOS Core v8.6.0 (Autonomous Cognitive Kernel)
 
 [![BioOS Architecture](https://img.shields.io/badge/Architecture-Active_Inference-blue.svg)](https://github.com/)
 [![LLM Engine](https://img.shields.io/badge/LLM-Gemini_3.6_Flash-orange.svg)](https://deepmind.google/technologies/gemini/)
 [![Google Apps Script](https://img.shields.io/badge/Runtime-Google_Apps_Script-green.svg)](https://developers.google.com/apps-script)
-[![Status](https://img.shields.io/badge/Status-Production_Operational-brightgreen.svg)](https://telegram.me/B80324_BioOS_bot)
+[![Status](https://img.shields.io/badge/Status-Bridge_Pending-orange.svg)](docs/ROADMAP.md)
 
 ---
 
@@ -165,45 +165,15 @@ BioOS_Core/
 │   └── appsscript.json       # Manifiesto y scopes de Google Cloud
 ├── data/backups/             # Copias de seguridad históricas
 ├── scratch/                  # Scripts de ejecución remota y diagnóstico
-│   └── remote_runner.mjs     # CLI autónoma para invocar Web App
 ├── BioOS_ROM.json            # Invariantes y prompts del clúster
 ├── CHANGELOG.md              # Registro cronológico de versiones
 └── package.json              # Scripts y suite de pruebas
 ```
 
-### Comandos de Verificación y Despliegue
-```powershell
-# 1. Ejecutar validación estática y suite de pruebas unitarias
-npm run verify
+### Validación y despliegue
+El despliegue de producción se publica con un tag `vX.Y.Z` mediante GitHub Actions, tras configurar `GAS_CLASPRC_JSON`, `BIOOS_GAS_DEPLOYMENT_ID` y el environment `production`. El pipeline actualiza un único deployment estable seleccionado explícitamente. No uses `clasp push --force` para publicar ni los comandos remotos heredados que invocan acciones con efectos secundarios.
 
-# 2. Sincronizar cambios locales hacia Google Apps Script
-npx @google/clasp push --force
-
-# 3. Desplegar una nueva versión inmutable
-npx @google/clasp deploy --description "BioOS v5.3.2 - Production release"
-```
-
-### Diagnóstico Remoto con `remote_runner.mjs`
-El runner remoto permite ejecutar y verificar los flujos en Apps Script desde la terminal local:
-```powershell
-# Probar despacho matutino
-node scratch/remote_runner.mjs testMorningBriefing
-
-# Probar despacho vespertino
-node scratch/remote_runner.mjs testNightBriefing
-
-# Ejecutar auditoría táctica dominical
-node scratch/remote_runner.mjs testWeeklyAudit
-
-# Ejecutar ciclo de meta-evolución mensual
-node scratch/remote_runner.mjs testMetaEvolution
-
-# Reconciliar y asegurar unicidad de triggers
-node scratch/remote_runner.mjs reconcileTriggers
-
-# Diagnosticar estado de memoria VFS
-node scratch/remote_runner.mjs testMemory
-```
+Para validar cambios localmente, consulta `docs/OPERATIONS.md`. Un despliegue GAS no instala el puente Android de Health Connect: los datos de Mi Fitness siguen indisponibles hasta implementar, autorizar y conectar ese componente.
 
 ---
 

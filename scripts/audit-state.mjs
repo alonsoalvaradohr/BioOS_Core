@@ -12,7 +12,7 @@ const backups = existsSync(backupsRoot) ? readdirSync(backupsRoot, { recursive: 
   .map((entry) => { const path = join(entry.parentPath || entry.path, entry.name); return { file: relative(root, path), bytes: statSync(path).size }; }) : [];
 const l1 = ((nvram.L1_Working || {}).session_events || []); const archives = ((nvram.L2_Episodic || {}).weekly_archives || []); const lake = ((nvram.L2_Episodic || {}).raw_data_lake || []);
 const report = {
-  auditedAt: new Date().toISOString(), configTarget: '5.1.0',
+  auditedAt: new Date().toISOString(), configTarget: '8.6.0',
   rom: { version: rom._version || null, promptIds: Object.keys(prompts).sort(), missingSpecialistPrompts: expected.filter((id) => !String(prompts[id] || '').trim()) },
   nvram: { bytes: statSync(join(root, 'BioOS_NVRAM.json')).size, schema: Number(nvram._bioos_memory_schema || 0), hasL0: !!nvram.L0_Ingestion_Cursors, counts: { l1Events: l1.length, l2Archives: archives.length, l2RawLake: lake.length }, latestL1Timestamp: l1.at(-1)?.timestamp || null, latestL2Timestamp: archives.at(-1)?.timestamp || null },
   backups,

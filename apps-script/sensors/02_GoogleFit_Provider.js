@@ -22,12 +22,6 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
       ]
     },
     {
-      name: 'heart_rate',
-      aggregateBy: [
-        { dataTypeName: 'com.google.heart_rate.bpm' }
-      ]
-    },
-    {
       name: 'sleep',
       aggregateBy: [
         { dataTypeName: 'com.google.sleep.segment' }
@@ -127,7 +121,7 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
 }
 
 function Sensor_GoogleFit_normalizeAggregate_(payload) {
-  var values = { rhrBpm: [], steps: [], distanceMeters: [], caloriesKcal: [], sleepMinutes: [] };
+  var values = { steps: [], distanceMeters: [], caloriesKcal: [], sleepMinutes: [] };
   if (!payload || typeof payload !== 'object') {
     return { rhrBpm: null, steps: null, distanceMeters: null, distanceKm: null, caloriesKcal: null, sleepMinutes: null };
   }
@@ -154,9 +148,6 @@ function Sensor_GoogleFit_normalizeAggregate_(payload) {
         } else if (type === 'calories') {
           var calVal = vals[0].fpVal !== undefined ? Number(vals[0].fpVal) : Number(vals[0].intVal || 0);
           if (isFinite(calVal) && calVal > 0) values.caloriesKcal.push(calVal);
-        } else if (type === 'heart_rate') {
-          var hrVal = vals[0].fpVal !== undefined ? Number(vals[0].fpVal) : Number(vals[0].intVal || 0);
-          if (isFinite(hrVal) && hrVal > 0) values.rhrBpm.push(hrVal);
         } else if (type === 'sleep') {
           var duration = Math.max(0, Number(point.endTimeNanos || 0) - Number(point.startTimeNanos || 0)) / 60000000000;
           if (isFinite(duration) && duration > 0) values.sleepMinutes.push(duration);
@@ -169,11 +160,10 @@ function Sensor_GoogleFit_normalizeAggregate_(payload) {
   var totalDistMeters = values.distanceMeters.length ? values.distanceMeters.reduce(function (a, b) { return a + b; }, 0) : null;
   var totalDistanceKm = totalDistMeters !== null ? Number((totalDistMeters / 1000).toFixed(2)) : null;
   var totalCalories = values.caloriesKcal.length ? Math.round(values.caloriesKcal.reduce(function (a, b) { return a + b; }, 0)) : null;
-  var avgRhr = values.rhrBpm.length ? Math.round(values.rhrBpm.reduce(function (a, b) { return a + b; }, 0) / values.rhrBpm.length) : null;
   var totalSleep = values.sleepMinutes.length ? Math.round(values.sleepMinutes.reduce(function (a, b) { return a + b; }, 0)) : null;
 
   return {
-    rhrBpm: avgRhr,
+    rhrBpm: null,
     steps: totalSteps,
     distanceMeters: totalDistMeters,
     distanceKm: totalDistanceKm,

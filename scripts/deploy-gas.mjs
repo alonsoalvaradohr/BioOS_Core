@@ -1,184 +1,118 @@
-import fs from 'fs';
-import path from 'path';
-import { execSync } from 'child_process';
+﻿import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
+const root = process.cwd();
 const home = process.env.USERPROFILE || process.env.HOME;
+if (!home) throw new Error('No se encontró el directorio del usuario.');
 const claspRcPath = path.join(home, '.clasprc.json');
-const claspConfigPath = path.join(process.cwd(), '.clasp.json');
-
-const claspConfig = JSON.parse(fs.readFileSync(claspConfigPath, 'utf8'));
+const claspConfig = JSON.parse(fs.readFileSync(path.join(root, '.clasp.json'), 'utf8'));
 const scriptId = claspConfig.scriptId;
+const deploymentId = process.env.BIOOS_GAS_DEPLOYMENT_ID;
+if (!deploymentId) throw new Error('Define BIOOS_GAS_DEPLOYMENT_ID para seleccionar explícitamente el deployment estable.');
 
-console.log('============================================================');
-console.log('🚀 INICIANDO DESPLIEGUE A PRODUCCIÓN REAL (Google Apps Script)');
-console.log(`📌 Script ID: ${scriptId}`);
-console.log('============================================================\n');
+const configSource = fs.readFileSync(path.join(root, 'apps-script', '00_Sys_Config.js'), 'utf8');
+const versionMatch = configSource.match(/VERSION\s*:\s*["']([^"']+)["']/);
+if (!versionMatch) throw new Error('No se pudo leer BIOOS_CONFIG.VERSION.');
+const bioosVersion = versionMatch[1];
+const releaseTag = process.env.GITHUB_REF_NAME;
+if (releaseTag && /^v\d/.test(releaseTag) && releaseTag.slice(1) !== bioosVersion) {
+  throw new Error(`El tag ${releaseTag} no coincide con BIOOS_CONFIG.VERSION (${bioosVersion}).`);
+}
+const gitSha = process.env.GITHUB_SHA
+  ? process.env.GITHUB_SHA.substring(0, 12)
+  : execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+const versionDescription = `BioOS ${bioosVersion} (${gitSha})`;
 
-// 1. REFRESCAR TOKEN OAUTH2
+function collectLocalFiles(directory, baseDirectory = directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(directory, entry.name);
+    const relativePath = path.relative(baseDirectory, fullPath).replace(/\\/g, '/');
+    if (entry.isDirectory()) {
+      if (['qa', 'node_modules', '.git'].includes(entry.name)) return [];
+      return collectLocalFiles(fullPath, baseDirectory);
+    }
+    if (!entry.isFile() || relativePath.endsWith('.node.test.js') || relativePath.endsWith('.md')) return [];
+    if (entry.name === 'appsscript.json') {
+      return [{ name: 'appsscript', type: 'JSON', source: fs.readFileSync(fullPath, 'utf8') }];
+    }
+    if (entry.name.endsWith('.js') || entry.name.endsWith('.gs')) {
+      return [{ name: relativePath.replace(/\\.(js|gs)$/, ''), type: 'SERVER_JS', source: fs.readFileSync(fullPath, 'utf8') }];
+    }
+    if (entry.name.endsWith('.html')) {
+      return [{ name: relativePath.replace(/\\.html$/, ''), type: 'HTML', source: fs.readFileSync(fullPath, 'utf8') }];
+    }
+    return [];
+  });
+}
+
 async function refreshAndGetToken() {
   const rc = JSON.parse(fs.readFileSync(claspRcPath, 'utf8'));
-  const def = rc.tokens.default;
-
-  const params = new URLSearchParams();
-  params.append('client_id', def.client_id);
-  params.append('client_secret', def.client_secret);
-  params.append('refresh_token', def.refresh_token);
-  params.append('grant_type', 'refresh_token');
-
-  const res = await fetch('https://oauth2.googleapis.com/token', {
+  const tokenConfig = rc && rc.tokens && rc.tokens.default;
+  if (!tokenConfig || !tokenConfig.client_id || !tokenConfig.client_secret || !tokenConfig.refresh_token) {
+    throw new Error('La credencial clasp local no contiene tokens OAuth completos.');
+  }
+  const params = new URLSearchParams({
+    client_id: tokenConfig.client_id,
+    client_secret: tokenConfig.client_secret,
+    refresh_token: tokenConfig.refresh_token,
+    grant_type: 'refresh_token'
+  });
+  const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: params.toString()
   });
-
-  const data = await res.json();
-  if (!data.access_token) {
-    throw new Error('Fallo al refrescar token OAuth2: ' + JSON.stringify(data));
-  }
-
-  def.access_token = data.access_token;
-  def.expiry_date = Date.now() + (data.expires_in * 1000);
-  fs.writeFileSync(claspRcPath, JSON.stringify(rc, null, 2), 'utf8');
-  console.log('🔑 Token OAuth2 refrescado exitosamente.');
+  const data = await response.json();
+  if (!response.ok || !data.access_token) throw new Error('No se pudo renovar OAuth para Google Apps Script.');
+  // Keep credentials read-only on disk; do not persist the short-lived token.
   return data.access_token;
 }
 
-// 2. RECOLECTAR ARCHIVOS LOCALES
-function collectLocalFiles(dir, baseDir = dir) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
-  let files = [];
-
-  for (const entry of entries) {
-    const fullPath = path.join(dir, entry.name);
-    const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
-
-    if (entry.isDirectory()) {
-      if (entry.name === 'qa' || entry.name === 'node_modules' || entry.name === '.git') continue;
-      files = files.concat(collectLocalFiles(fullPath, baseDir));
-    } else if (entry.isFile()) {
-      if (relPath.endsWith('.node.test.js') || relPath.endsWith('.md')) continue;
-
-      if (entry.name === 'appsscript.json') {
-        files.push({
-          name: 'appsscript',
-          type: 'JSON',
-          source: fs.readFileSync(fullPath, 'utf8')
-        });
-      } else if (entry.name.endsWith('.js') || entry.name.endsWith('.gs')) {
-        const nameWithoutExt = relPath.replace(/\.(js|gs)$/, '');
-        files.push({
-          name: nameWithoutExt,
-          type: 'SERVER_JS',
-          source: fs.readFileSync(fullPath, 'utf8')
-        });
-      } else if (entry.name.endsWith('.html')) {
-        const nameWithoutExt = relPath.replace(/\.html$/, '');
-        files.push({
-          name: nameWithoutExt,
-          type: 'HTML',
-          source: fs.readFileSync(fullPath, 'utf8')
-        });
-      }
-    }
-  }
-
-  return files;
+async function apiRequest(token, route, options = {}) {
+  const response = await fetch(`https://script.googleapis.com/v1/projects/${scriptId}${route}`, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) }
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`Apps Script API ${response.status} en ${route}: ${JSON.stringify(body)}`);
+  return body;
 }
 
 async function deploy() {
+  if (!fs.existsSync(claspRcPath)) throw new Error('No existe ~/.clasprc.json; autentica clasp en este entorno.');
   const token = await refreshAndGetToken();
+  const deploymentList = await apiRequest(token, '/deployments');
+  const deployments = Array.isArray(deploymentList.deployments) ? deploymentList.deployments : [];
+  const selected = deployments.find((item) => item.deploymentId === deploymentId);
+  if (!selected) throw new Error('El deployment seleccionado no existe en el proyecto; no se subieron archivos.');
+  if (!selected.deploymentConfig || selected.deploymentConfig.versionNumber === undefined) {
+    throw new Error('El deployment seleccionado apunta a HEAD; el pipeline solo actualiza deployments versionados.');
+  }
 
-  // PASO 1: Subir archivos (PUT /content)
-  const localFiles = collectLocalFiles(path.join(process.cwd(), 'apps-script'));
-  console.log(`📦 Empaquetados ${localFiles.length} archivos para subir.`);
+  const files = collectLocalFiles(path.join(root, 'apps-script'));
+  if (!files.length) throw new Error('No hay archivos Apps Script para desplegar.');
+  console.log(`Subiendo ${files.length} archivos para BioOS ${bioosVersion}.`);
+  await apiRequest(token, '/content', { method: 'PUT', body: JSON.stringify({ files }) });
 
-  const putRes = await fetch(`https://script.googleapis.com/v1/projects/${scriptId}/content`, {
+  const version = await apiRequest(token, '/versions', { method: 'POST', body: JSON.stringify({ description: versionDescription }) });
+  if (!version.versionNumber) throw new Error('La API no devolvió un número de versión.');
+
+  await apiRequest(token, `/deployments/${encodeURIComponent(deploymentId)}`, {
     method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ files: localFiles })
+    body: JSON.stringify({
+      deploymentConfig: {
+        scriptId,
+        versionNumber: version.versionNumber,
+        description: versionDescription
+      }
+    })
   });
-
-  const putData = await putRes.json();
-  if (!putRes.ok) {
-    throw new Error('Fallo al subir archivos a Apps Script: ' + JSON.stringify(putData));
-  }
-  console.log('✅ Archivos subidos exitosamente a Google Apps Script.');
-
-  // PASO 2: Crear nueva versión inmutable (POST /versions)
-  const versionDescription = `BioOS v6.1.0-PROD-LIVE - Real World SRE & Live Webhook Wiring (${new Date().toISOString()})`;
-  const verRes = await fetch(`https://script.googleapis.com/v1/projects/${scriptId}/versions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ description: versionDescription })
-  });
-
-  const verData = await verRes.json();
-  if (!verRes.ok) {
-    throw new Error('Fallo al crear versión inmutable: ' + JSON.stringify(verData));
-  }
-  const newVersionNumber = verData.versionNumber;
-  console.log(`🏷️ Nueva Versión Inmutable Creada: Version ${newVersionNumber} ("${versionDescription}")`);
-
-  // PASO 3: Listar y Actualizar Deployments (PUT /deployments/{id})
-  const depListRes = await fetch(`https://script.googleapis.com/v1/projects/${scriptId}/deployments`, {
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
-  const depListData = await depListRes.json();
-
-  const deployments = depListData.deployments || [];
-  console.log(`🔄 Actualizando ${deployments.length} despliegues activos a la Version ${newVersionNumber}...`);
-
-  const updatedDeployments = [];
-
-  for (const dep of deployments) {
-    const isHead = !dep.deploymentConfig || dep.deploymentConfig.versionNumber === undefined;
-    if (isHead) {
-      console.log(`- Deployment HEAD (${dep.deploymentId}) ya apunta al código actual.`);
-      updatedDeployments.push({ deploymentId: dep.deploymentId, version: '@HEAD' });
-      continue;
-    }
-
-    const updateRes = await fetch(`https://script.googleapis.com/v1/projects/${scriptId}/deployments/${dep.deploymentId}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        deploymentConfig: {
-          scriptId: scriptId,
-          versionNumber: newVersionNumber,
-          description: versionDescription
-        }
-      })
-    });
-
-    const updateData = await updateRes.json();
-    if (updateRes.ok) {
-      console.log(`✅ Deployment ${dep.deploymentId} actualizado a Version ${newVersionNumber}`);
-      updatedDeployments.push({ deploymentId: dep.deploymentId, version: newVersionNumber });
-    } else {
-      console.warn(`⚠️ No se pudo actualizar deployment ${dep.deploymentId}:`, updateData);
-    }
-  }
-
-  console.log('\n🎉 ¡DESPLIEGUE A PRODUCCIÓN REAL COMPLETADO CON ÉXITO!');
-  console.log('============================================================\n');
-
-  return {
-    versionNumber: newVersionNumber,
-    description: versionDescription,
-    deployments: updatedDeployments
-  };
+  console.log(`Deployment seleccionado actualizado a versión ${version.versionNumber} (${versionDescription}).`);
+  console.log('No se modificaron otros deployments.');
 }
 
-deploy().catch(err => {
-  console.error('❌ ERROR FATAL EN EL DESPLIEGUE:', err);
+deploy().catch((error) => {
+  console.error('Despliegue cancelado:', error.message);
   process.exitCode = 1;
 });

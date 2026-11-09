@@ -381,31 +381,26 @@ function _handleBypassCommand(command, sourceChatId) {
       return;
     }
     if (normalizedCommand === "/reauth" || normalizedCommand === "/auth") {
-      const serviceUrl = (typeof ScriptApp !== 'undefined' && ScriptApp.getService && ScriptApp.getService().getUrl()) || '';
-      const authUrl = serviceUrl ? (serviceUrl + (serviceUrl.includes('?') ? '&' : '?') + 'action=reauth') : 'https://script.google.com/home';
-      const authMsg = "🔐 <b>[BIOOS PROTOCOLO DE RE-AUTENTICACIÓN OAUTH2]</b>\n\n" +
-                      "Se han inyectado nuevos permisos de Google Fit (Ubicación, Distancia, Calorías y Sensores).\n\n" +
-                      "👉 <b>Enlace de Re-Autorización:</b>\n" +
-                      '<a href="' + authUrl + '">🔗 TOCAR AQUÍ PARA AUTORIZAR GOOGLE FIT</a>\n\n' +
-                      "<i>Si Google muestra 'Aplicación no verificada', toca 'Avanzado' -> 'Ir a BioOS (no seguro)' -> 'Permitir'.\n" +
-                      "Una vez completado, invoca /doctor para validar la telemetría viva.</i>";
+      const authMsg = '<b>Integracion biometrica</b>\nMi Fitness debe sincronizar con Health Connect. BioOS aun no incluye el puente Android que lee esos datos con tu permiso; reautorizar Google Fit no conecta el Xiaomi Watch 2.';
       if (typeof _rawSystemNotify === "function") _rawSystemNotify(authMsg, sourceChatId);
       return;
     }
     if (normalizedCommand === "/ping") {
-      const pongMsg = "📡 <b>Pong.</b> Túnel seguro activo. Exocórtex BioOS v7.1 en línea.";
+      const version = typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : 'unknown';
+      const pongMsg = 'Pong. Tunel activo. BioOS ' + version + ' en linea.';
       if (typeof _rawSystemNotify === "function" && !_rawSystemNotify(pongMsg, sourceChatId)) {
         throw new Error('[COMMAND_NOTIFY_FAILED] No fue posible enviar /ping.');
       }
       return;
     }
     if (normalizedCommand === "/ayuda" || normalizedCommand === "/help") {
-      const helpMsg = "🧠 <b>BioOS Exocórtex v7.1 - Comandos Disponibles:</b>\n\n" +
-                      "• <code>/estado</code> o <code>/memoria</code> - Dashboard ejecutivo de telemetría, biometría y NVRAM.\n" +
-                      "• <code>/doctor</code> - Diagnóstico en vivo y granular de Google Fit y sensores de hardware.\n" +
-                      "• <code>/reauth</code> - Renovar y autorizar scopes de Google Fit y Ubicación.\n" +
-                      "• <code>/ping</code> - Comprobar latencia y conectividad del túnel.\n" +
-                      "• <i>Envío directo:</i> Notas de Voz, Imágenes o Texto para inferencia activa.";
+      const version = typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : 'unknown';
+      const helpMsg = '<b>BioOS ' + version + ' - Comandos</b>\n\n' +
+                      '<code>/estado</code> - Telemetria disponible y memoria reciente.\n' +
+                      '<code>/doctor</code> - Estado de sensores, valores y fuente.\n' +
+                      '<code>/reauth</code> - Estado de la ruta Mi Fitness/Health Connect.\n' +
+                      '<code>/ping</code> - Conectividad del tunel.\n' +
+                      'Puedes enviar texto, notas de voz o imagenes.';
       if (typeof _rawSystemNotify === "function") _rawSystemNotify(helpMsg, sourceChatId);
       return;
     }
@@ -423,68 +418,25 @@ function _handleBypassCommand(command, sourceChatId) {
  * Se salta la NVRAM y realiza un fetch desacoplado a los endpoints para auditar tokens y degradación grácil.
  */
 function _diagnoseSensorsLive_(sourceChatId) {
-  const reportLines = [];
-  reportLines.push('🩺 <b>[BIOOS SRE DOCTOR: DIAGNÓSTICO EN VIVO DE SENSORES]</b>\n');
-
-  try {
-    const token = typeof ScriptApp !== 'undefined' ? ScriptApp.getOAuthToken() : null;
-    reportLines.push('🔑 <b>1. OAuth Token Apps Script:</b> ' + (token ? '🟢 Generado (' + token.substring(0, 8) + '...)' : '🔴 NO DISPONIBLE'));
-  } catch (tokErr) {
-    reportLines.push('🔑 <b>1. OAuth Token Apps Script:</b> 🔴 ' + tokErr.message);
-  }
-
-  // 1. Sensor Engine Master Probe (Degradación Grácil Granular)
+  const lines = ['<b>BioOS - Estado de sensores</b>'];
   try {
     const snap = typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot() : null;
     const data = (snap && snap.data) || {};
-    const meta = (snap && snap.metadata) || {};
-    const report = meta.telemetryReport || {};
-
-    reportLines.push('\n📡 <b>2. Google Fit API Status (Aislamiento Granular):</b> ' + ((snap && snap.available) ? '🟢 ONLINE' : '🟡 PARCIAL / NOMINAL'));
-    reportLines.push('• <b>Actividad (Pasos/Calorías):</b> ' + (report.activity && report.activity.ok ? '🟢 HTTP 200 OK' : '🟡 ' + ((report.activity && report.activity.httpStatus) || 'OK')));
-    reportLines.push('• <b>Frecuencia Cardíaca (RHR):</b> ' + (report.heart_rate && report.heart_rate.ok ? '🟢 HTTP 200 OK' : '🟡 ' + ((report.heart_rate && report.heart_rate.httpStatus) || 'OK')));
-    reportLines.push('• <b>Monitor de Sueño (Sleep):</b> ' + (report.sleep && report.sleep.ok ? '🟢 HTTP 200 OK' : '🟡 ' + ((report.sleep && report.sleep.httpStatus) || 'OK')));
-    reportLines.push('• <b>Ubicación (Distancia GPS):</b> ' + (report.location && report.location.ok ? '🟢 HTTP 200 OK' : '🟡 HTTP ' + ((report.location && report.location.httpStatus) || '403') + ' (Usa /reauth para habilitar)'));
-
-    reportLines.push('\n📊 <b>Métricas Extraídas en Vivo:</b>');
-    reportLines.push('• <b>Pasos:</b> <code>' + (data.steps !== null ? Number(data.steps).toLocaleString() : '0 / Sin datos') + '</code>');
-    reportLines.push('• <b>Distancia:</b> <code>' + (data.distanceKm !== null ? data.distanceKm + ' km' : 'Sin permiso location.read') + '</code>');
-    reportLines.push('• <b>Calorías:</b> <code>' + (data.caloriesKcal !== null ? data.caloriesKcal + ' kcal' : '0 kcal') + '</code>');
-    reportLines.push('• <b>RHR:</b> <code>' + (data.rhrBpm !== null ? data.rhrBpm + ' bpm' : 'Sin lectura') + '</code>');
-    reportLines.push('• <b>Sueño:</b> <code>' + (data.sleepMinutes !== null ? (data.sleepMinutes / 60).toFixed(1) + 'h' : 'Sin lectura') + '</code>');
-
-    if (report.location && !report.location.ok) {
-      reportLines.push('\n💡 <i>Nota SRE: Si distancia muestra HTTP 403, ejecuta /reauth para aceptar los nuevos permisos en Google.</i>');
-    }
-  } catch (snapErr) {
-    reportLines.push('📡 <b>2. Google Fit API Crash:</b> 🔴 ' + snapErr.message);
+    lines.push('Fuente activa: ' + ((snap && snap.source) || 'ninguna'));
+    lines.push('Lectura consultada: ' + ((snap && snap.fetchedAt) || 'sin marca de tiempo'));
+    lines.push('Estado del proveedor: ' + ((snap && snap.available) ? 'consulta disponible' : ((snap && snap.reason) || 'sin datos')));
+    lines.push('Pasos: ' + (data.steps === null || data.steps === undefined ? 'sin dato' : Number(data.steps).toLocaleString()));
+    lines.push('Distancia: ' + (data.distanceKm === null || data.distanceKm === undefined ? 'sin dato' : data.distanceKm + ' km'));
+    lines.push('Energ?a: ' + (data.caloriesKcal === null || data.caloriesKcal === undefined ? 'sin dato' : data.caloriesKcal + ' kcal'));
+    lines.push('Frecuencia card?aca en reposo: ' + (data.rhrBpm === null || data.rhrBpm === undefined ? 'sin dato v?lido' : data.rhrBpm + ' bpm'));
+    lines.push('Sue?o: ' + (data.sleepMinutes === null || data.sleepMinutes === undefined ? 'sin dato' : (data.sleepMinutes / 60).toFixed(1) + ' h'));
+  } catch (error) {
+    lines.push('Lectura fallida: ' + String(error && error.message || error).slice(0, 180));
   }
-
-  // 2. Mobvoi Primary Provider Probe
-  try {
-    const mobvoiSnap = typeof Sensor_Mobvoi_fetchSnapshot === 'function' ? Sensor_Mobvoi_fetchSnapshot({ sinceMs: Date.now() - 24*3600000 }) : null;
-    reportLines.push('\n⌚ <b>3. Mobvoi TicWatch Status:</b> ' + ((mobvoiSnap && mobvoiSnap.available) ? '🟢 ONLINE' : '🟡 ' + ((mobvoiSnap && mobvoiSnap.reason) || 'No configurado')));
-  } catch (mobErr) {
-    reportLines.push('\n⌚ <b>3. Mobvoi TicWatch:</b> 🔴 ' + mobErr.message);
-  }
-
-  // 3. Sensor Engine Master State
-  try {
-    const snap = typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot() : null;
-    reportLines.push('\n🧬 <b>4. Snapshot Maestro del Sensor Engine:</b>');
-    reportLines.push('• <b>Proveedor Activo:</b> <code>' + ((snap && snap.source) || 'Ninguno') + '</code>');
-    reportLines.push('• <b>Disponible:</b> <code>' + ((snap && snap.available) ? 'SÍ (ONLINE)' : 'NO (Ceguera Sensorial)') + '</code>');
-  } catch (snapErr) {
-    reportLines.push('\n🧬 <b>4. Sensor Engine Crash:</b> 🔴 ' + snapErr.message);
-  }
-
-  reportLines.push('\n<i>SRE Sonda de penetración con Aislamiento Granular y Degradación Grácil.</i>');
-
-  const reportText = reportLines.join('\n');
-  if (typeof _rawSystemNotify === 'function' && sourceChatId) {
-    _rawSystemNotify(reportText, sourceChatId);
-  }
-  return reportText;
+  lines.push('Mi Fitness/Health Connect: requiere un puente Android con permisos del usuario; no est? conectado directamente a Apps Script.');
+  const report = lines.join('\n');
+  if (typeof _rawSystemNotify === 'function' && sourceChatId) _rawSystemNotify(report, sourceChatId);
+  return report;
 }
 
 /**
@@ -620,77 +572,20 @@ function _isApprovedTelegramWebhookUrl_(value) {
  * Handler HTTP GET para diagnóstico y ejecución autónoma remota.
  */
 function doGet(e) {
-  try {
-    const p = e && e.parameter ? e.parameter : {};
-    const action = String(p.action || 'ping').trim();
-
-    if (action === 'reauth' || action === 'auth') {
-      var token = typeof ScriptApp !== 'undefined' ? ScriptApp.getOAuthToken() : null;
-      var snap = typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot() : null;
-      var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>BioOS OAuth Reauth</title>' +
-                 '<style>body{font-family:system-ui,sans-serif;padding:2rem;background:#0d1117;color:#c9d1d9;} ' +
-                 '.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1.5rem;max-width:600px;margin:auto;} ' +
-                 'h2{color:#58a6ff;} code{background:#21262d;padding:0.2rem 0.4rem;border-radius:4px;color:#7ee787;} ' +
-                 'a{color:#58a6ff;text-decoration:none;font-weight:bold;}</style></head><body>' +
-                 '<div class="card">' +
-                 '<h2>🟢 BioOS OAuth2 Re-Autenticación Completada</h2>' +
-                 '<p>Los permisos de Google Fit (Distancia, Pasos, RHR, Calorías, Sueño) se han actualizado exitosamente en el runtime.</p>' +
-                 '<p><b>Token Activo:</b> <code>' + (token ? token.substring(0, 15) + '...' : 'No disponible') + '</code></p>' +
-                 '<p><b>Snapshot Biométrico:</b> <code>' + ((snap && snap.available) ? 'ONLINE' : 'DEGRADED/NOMINAL') + '</code></p>' +
-                 '<p>Ya puedes regresar a tu cliente de <b>Telegram</b> y ejecutar <code>/doctor</code> o <code>/estado</code>.</p>' +
-                 '</div></body></html>';
-      return (typeof HtmlService !== 'undefined' && HtmlService.createHtmlOutput)
-        ? HtmlService.createHtmlOutput(html).setTitle("BioOS Re-Autenticación")
-        : ContentService.createTextOutput("🟢 BioOS OAuth2 Re-Autenticación Exitosa.").setMimeType(ContentService.MimeType.TEXT);
-    }
-    if (action === 'testMemory') {
-      const res = testMemoryReadWrite();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testMorningBriefing') {
-      const res = testMorningBriefingPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testNightBriefing') {
-      const res = testNightBriefingPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testCredenciales') {
-      const res = testCredenciales();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'diagnosticoTriggers') {
-      const res = diagnosticoDisparadores();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'reconcileTriggers') {
-      const res = reconcileCronobiologicalTriggers();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'installTriggers') {
-      const res = installCronobiologicalTriggers();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testWeeklyAudit') {
-      const res = testWeeklyAuditPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testMetaEvolution') {
-      const res = testMetaEvolutionPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-
-    return ContentService.createTextOutput(JSON.stringify({
-      status: 'ONLINE',
-      system: 'BioOS Autonomous Cognitive Kernel',
-      version: typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : '5.3.0',
-      timestamp: new Date().toISOString()
-    }, null, 2)).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({
-      status: 'ERROR',
-      error: err.message,
-      stack: err.stack
-    }, null, 2)).setMimeType(ContentService.MimeType.JSON);
+  const action = String((e && e.parameter && e.parameter.action) || 'ping').trim();
+  if (action === 'reauth' || action === 'auth') {
+    return ContentService.createTextOutput('BioOS does not configure Xiaomi accounts or read Health Connect directly. Sync Mi Fitness to Health Connect and connect an authorized Android bridge before enabling live telemetry.')
+      .setMimeType(ContentService.MimeType.TEXT);
   }
+  if (action !== 'ping') {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'UNSUPPORTED_ACTION' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  return ContentService.createTextOutput(JSON.stringify({
+    status: 'ONLINE',
+    system: 'BioOS',
+    version: typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : 'unknown',
+    timestamp: new Date().toISOString(),
+    scope: 'read-only liveness; no sensor data or operational actions'
+  })).setMimeType(ContentService.MimeType.JSON);
 }

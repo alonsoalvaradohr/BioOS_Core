@@ -1,5 +1,13 @@
 # Changelog
 
+## 8.6.0 - 2026-11-08
+
+- Scheduled morning and evening reports now render only observed sensor fields and explicitly identify missing data; they no longer ask an LLM to invent workouts, macros, or sleep schedules.
+- Removed average exercise/general heart rate from the Google Fit adapter's RHR field.
+- Disabled weekly ACWR reports and automatic monthly weight tuning until verified workout outcomes are connected.
+- Added release-tag deployment automation. The deploy script requires one explicit Apps Script deployment ID, keeps clasp credentials read-only, and updates no other deployments.
+- Health checks now report that Mi Fitness/Health Connect ingestion is not yet connected.
+
 ## 5.4.0 - 2026-08-21
 
 - **Resolución de Incidente Crítico: Tubería de Datos Biométricos & Integridad Numérica**:

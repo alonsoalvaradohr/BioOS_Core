@@ -1,56 +1,46 @@
-# Operación y despliegue
+# Operacion y release
 
-## Propiedades requeridas
+## Propiedades de runtime
 
-Configurar en Script Properties, nunca en archivos versionados:
+Configurar secretos en Apps Script Script Properties, nunca en archivos versionados. La compatibilidad actual con Mi Fitness aun requiere un puente Android autorizado que escriba snapshots firmados en el endpoint que se implemente; no almacenar un access token OAuth en NVRAM.
 
 - `GEMINI_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `TELEGRAM_SECRET_TOKEN`
-- `BIOOS_WEB_APP_URL`: URL HTTPS del proxy autenticado `workers.dev`
-- `BIOOS_DB_ID`: recomendado para evitar búsquedas ambiguas
-- `BIOOS_OPS_APPROVAL_TOKEN`: mínimo 24 caracteres; requerido para migraciones y emergencias
-- `VFS_FOLDER_ID`, `VFS_ROM_ID`, `VFS_NVRAM_ID`: recomendados tras aprovisionar almacenamiento
+- `BIOOS_WEB_APP_URL`: URL HTTPS del proxy autenticado
+- `BIOOS_SENSOR_PROVIDER`: `health_connect` (default; no disponible sin puente), `mobvoi` o `google_fit_legacy` solo para instalaciones antiguas
+- `BIOOS_DB_ID`
+- `BIOOS_OPS_APPROVAL_TOKEN`: minimo 24 caracteres para migraciones protegidas
+- `VFS_FOLDER_ID`, `VFS_ROM_ID`, `VFS_NVRAM_ID`
+- `MOBVOI_API_ENDPOINT`, `MOBVOI_API_TOKEN` (solo si Mobvoi sigue siendo fuente activa)
 
-## Validación y release
+## Validacion local
 
 ```powershell
-npm run verify
-clasp status
-clasp push
-clasp version "BioOS v5.1.0 - runtime hardening"
-clasp deployments
+npm run check
 ```
 
-Para producción, actualizar un deployment existente con `clasp redeploy`; conservar una sola URL estable por entorno. No ejecutar `registerTelegramWebhook()` hasta que `BIOOS_WEB_APP_URL` apunte al proxy y `preflightDeployment()` termine sin advertencias.
+La validacion no demuestra que sensores, VFS, proxy o Telegram funcionen en runtime. Revisar `/doctor` tras un despliegue autorizado; no hay smoke test remoto que escriba en memoria o envíe mensajes de prueba.
 
-## Funciones operativas
+## Release a GAS
 
-| Función | Efecto |
-|---|---|
-| `healthCheckBioOS()` | Informe de solo lectura |
-| `preflightDeployment()` | Bloquea release ante fallos o advertencias |
-| `bootBioOS()` | Confirma readiness; no provisiona ni despliega |
-| `provisionBioOSStorage()` | Crea únicamente particiones ausentes |
-| `QA_RunIsolatedSuite()` | Pruebas con fakes, sin producción |
-| `repairNVRAMFromRecoverySlot('A'|'B')` | Recuperación explícita desde slot verificado |
-| `getRuntimeStateSummary()` | Resumen seguro de ROM, NVRAM y capacidades |
-| `migrateNVRAMToCurrentSchema(token)` | Migra y crea un slot verificable; requiere aprobación |
-| `installCanonicalV5Prompts(token)` | Añade solo prompts faltantes y crea snapshot ROM |
-| `emergencyStopManagedTriggers(token)` | Detiene solo triggers administrados; conserva la cola |
-| `emergencyPurgeQueue(token, 'PURGE_QUEUE')` | Purga explícita de cola con doble confirmación |
+El deploy automatizado actualiza un solo deployment estable. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v8.6.0` para version `8.6.0`) y que `BIOOS_GAS_DEPLOYMENT_ID` apunta al deployment realmente usado por Telegram/proxy.
 
-`executeFactoryResetVFS()` y la función heredada `emergencyStopAndPurge()` están deliberadamente deshabilitadas y siempre lanzan un error.
+Configurar en GitHub Actions:
 
-## Rollback
+- `GAS_CLASPRC_JSON`: contenido de la credencial clasp con permisos de Apps Script API, guardado como secret.
+- `BIOOS_GAS_DEPLOYMENT_ID`: ID del deployment estable que se permite actualizar.
+- Environment `production` para el job de release.
 
-1. No sobrescribir NVRAM manualmente.
-2. Identificar el último slot válido mediante el health check y los metadatos de generación.
-3. Ejecutar `repairNVRAMFromRecoverySlot` con el slot elegido.
-4. Para código, reasignar el deployment estable a una versión anterior mediante `clasp redeploy`.
-5. Ejecutar nuevamente el preflight y una prueba controlada del proxy.
+El job se activa con tags `v*`, verifica el tag contra la version del codigo y no toca deployments distintos. El script de despliegue no escribe el token OAuth renovado sobre `~/.clasprc.json`.
 
-## Despliegues históricos
+No publicar una version mientras el preflight tenga FAIL/WARN relevante o el destino estable no este identificado. El despliegue modifica el codigo GAS y la version de un deployment; no autoriza ni instala por si mismo permisos de Health Connect, no crea la app Android y no configura el proxy.
 
-No eliminar deployments únicamente por antigüedad. Primero hay que verificar qué URL utiliza el proxy, Telegram y cualquier integración externa. Una vez identificado el deployment estable, los demás pueden retirarse en una ventana de mantenimiento documentada.
+## Recuperacion
+
+1. No sobrescribir la NVRAM manualmente.
+2. Identificar el slot de recuperacion verificado.
+3. Restaurar mediante `repairNVRAMFromRecoverySlot`.
+4. Reasignar el deployment estable a una version GAS anterior.
+5. Verificar de nuevo estado de VFS, proveedor biometrico, proxy y mensajeria.

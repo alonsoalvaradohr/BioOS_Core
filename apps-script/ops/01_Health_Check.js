@@ -144,9 +144,14 @@ function _opsCheckDatabase_() {
 
 function _opsCheckSensors_() {
   const props = PropertiesService.getScriptProperties();
-  const mobvoiReady = !!(props.getProperty('MOBVOI_API_ENDPOINT') && props.getProperty('MOBVOI_API_TOKEN'));
-  if (mobvoiReady) return _opsResult_('sensors', 'PASS', 'Proveedor Mobvoi primario configurado; Google Fit queda como fallback.');
-  return _opsResult_('sensors', 'WARN', 'Mobvoi primario no está configurado; operación biométrica degradada al fallback de Google Fit.', { primary: 'unavailable', fallback: 'google-fit' });
+  const provider = String(props.getProperty('BIOOS_SENSOR_PROVIDER') || 'health_connect').trim().toLowerCase();
+  if (provider === 'health_connect') return _opsResult_('sensors', 'WARN', 'Health Connect esta seleccionado, pero el puente Android para Mi Fitness aun no esta instalado.', { provider: provider, ready: false });
+  if (provider === 'mobvoi') {
+    const configured = !!(props.getProperty('MOBVOI_API_ENDPOINT') && props.getProperty('MOBVOI_API_TOKEN'));
+    return _opsResult_('sensors', configured ? 'PASS' : 'FAIL', configured ? 'Proveedor Mobvoi configurado de forma explicita.' : 'Mobvoi seleccionado, pero faltan sus credenciales.', { provider: provider, ready: configured });
+  }
+  if (provider === 'google_fit_legacy') return _opsResult_('sensors', 'WARN', 'Google Fit REST esta seleccionado como proveedor heredado; no equivale a la integracion Mi Fitness/Health Connect.', { provider: provider, ready: false });
+  return _opsResult_('sensors', 'FAIL', 'BIOOS_SENSOR_PROVIDER no es compatible.', { provider: provider, ready: false });
 }
 
 function _opsCheckTriggers_() {
