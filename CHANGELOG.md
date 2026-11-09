@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.8.0 - 2026-11-09
+
+- Restored the existing Google Fit REST path as failover when Health Connect has no Android bridge and when Mobvoi is unavailable; `/doctor` remains the live validation and no Fit response is assumed.
+- Added persistent L3 semantic atoms, private versioned 96D local feature vectors and cosine retrieval in orchestrator/briefing context. Added `/recordar`, `/memoria`, `/olvidar ID`, and explicit `/resultado` storage.
+- Added provenance/expiry, a 300-memory cap, the 4 MB NVRAM hard cap, and recovery-slot snapshots for semantic/outcome writes.
+- Updated the Xiaomi Watch 2 route and documented Google Fit as a compatibility path that must migrate to Health Connect.
+
 ## 8.7.1 - 2026-11-09
 
 - Morning briefings now read recent user-reported training intent from L1 working memory, label it as reported rather than verified, and avoid asking for the same plan again when one was recently supplied.

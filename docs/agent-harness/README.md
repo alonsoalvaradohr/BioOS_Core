@@ -39,7 +39,7 @@ No dupliques conocimiento en un segundo “brain dump”. Al cerrar una tarea, r
 
 ## Políticas específicas BioOS
 
-- Xiaomi Watch 2 → Mi Fitness → Health Connect es la ruta prevista. Sin puente Android instalado y permiso concedido, BioOS debe decir “no conectado”.
+- La ruta que Alonso ya usa es Mi Fitness → Google Fit, leída por el OAuth REST existente; el motor intenta ese fallback mientras no responda Health Connect. `/doctor` debe confirmar en runtime campos/frescura. Health Connect con bridge Android es la migración futura de Google Fit, no una conexión asumida.
 - `heart_rate.bpm` de ejercicio no equivale a RHR. Mantén fuente, timestamp, unidad y ventana temporal en toda métrica.
 - No deduzcas entrenamiento, macros, sueño, agenda o estado SNC desde pasos, calorías basales o telemetría ausente.
 - No aprendas ni ajustes pesos persistentes a partir de texto generado. Primero outcome confirmado, temporalidad y procedencia.

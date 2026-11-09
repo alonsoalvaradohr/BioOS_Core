@@ -381,8 +381,27 @@ function _handleBypassCommand(command, sourceChatId) {
       return;
     }
     if (normalizedCommand === "/reauth" || normalizedCommand === "/auth") {
-      const authMsg = '<b>Integracion biometrica</b>\nMi Fitness debe sincronizar con Health Connect. BioOS aun no incluye el puente Android que lee esos datos con tu permiso; reautorizar Google Fit no conecta el Xiaomi Watch 2.';
+      const authMsg = '<b>Integracion biometrica</b>\nBioOS consulta primero la ruta OAuth existente de Google Fit, donde Mi Fitness puede sincronizar ejercicios compatibles. Usa /doctor para ver el resultado real. Si Google Fit devuelve 401/403, hay que reautorizar en el proyecto Apps Script existente; Health Connect directo es la ruta futura y no tiene puente servidor instalado.';
       if (typeof _rawSystemNotify === "function") _rawSystemNotify(authMsg, sourceChatId);
+      return;
+    }
+    if (normalizedCommand === "/recordar" || normalizedCommand === "/remember") {
+      const text = rawCmd.replace(/^\/\w+(?:@[^\s]+)?\s*/, '').trim();
+      if (text.length < 3) { if (typeof _rawSystemNotify === 'function') _rawSystemNotify('Uso: <code>/recordar texto que BioOS debe conservar</code>', sourceChatId); return; }
+      const saved = Memory_storeSemantic({ text: text, type: 'user_note', source: 'telegram_explicit', status: 'confirmed', ttlDays: 365 });
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(saved.ok ? 'Recuerdo guardado. ID: <code>' + saved.id + '</code>\nCaduca: ' + saved.expiresAt : 'No pude guardar el recuerdo.', sourceChatId);
+      return;
+    }
+    if (normalizedCommand === "/olvidar" || normalizedCommand === "/forget") {
+      const id = rawCmd.replace(/^\/\w+(?:@[^\s]+)?\s*/, '').trim();
+      const forgotten = Memory_forgetSemantic(id);
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(forgotten.removed ? 'Recuerdo eliminado: <code>' + id + '</code>' : 'No encontré ese ID. Usa /memoria para consultar los recuerdos activos.', sourceChatId);
+      return;
+    }
+    if (normalizedCommand === "/resultado") {
+      const text = rawCmd.replace(/^\/\w+(?:@[^\s]+)?\s*/, '').trim();
+      const result = Memory_recordUserOutcome(text, 'COMPLETED', 'telegram-' + Date.now());
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(result.ok ? 'Resultado guardado como sesión confirmada por ti. ID: <code>' + result.outcomeId + '</code>' : 'Uso: <code>/resultado descripción de la sesión realizada</code>', sourceChatId);
       return;
     }
     if (normalizedCommand === "/ping") {
@@ -398,7 +417,10 @@ function _handleBypassCommand(command, sourceChatId) {
       const helpMsg = '<b>BioOS ' + version + ' - Comandos</b>\n\n' +
                       '<code>/estado</code> - Telemetria disponible y memoria reciente.\n' +
                       '<code>/doctor</code> - Estado de sensores, valores y fuente.\n' +
-                      '<code>/reauth</code> - Estado de la ruta Mi Fitness/Health Connect.\n' +
+                      '<code>/reauth</code> - Ayuda de autenticación; /doctor consulta la ruta en vivo.\n' +
+                      '<code>/recordar texto</code> - Guarda un recuerdo duradero.\n' +
+                      '<code>/olvidar ID</code> - Elimina un recuerdo guardado.\n' +
+                      '<code>/resultado sesión</code> - Registra un resultado de entrenamiento confirmado.\n' +
                       '<code>/ping</code> - Conectividad del tunel.\n' +
                       'Puedes enviar texto, notas de voz o imagenes.';
       if (typeof _rawSystemNotify === "function") _rawSystemNotify(helpMsg, sourceChatId);
@@ -433,7 +455,7 @@ function _diagnoseSensorsLive_(sourceChatId) {
   } catch (error) {
     lines.push('Lectura fallida: ' + String(error && error.message || error).slice(0, 180));
   }
-  lines.push('Mi Fitness/Health Connect: requiere un puente Android con permisos del usuario; no est? conectado directamente a Apps Script.');
+  lines.push('Mi Fitness -> Google Fit: BioOS consulta la ruta existente con OAuth del Apps Script. Este comando muestra si devuelve datos recientes; si la API legacy deja de responder, usar Health Connect directo en Android.');
   const report = lines.join('\n');
   if (typeof _rawSystemNotify === 'function' && sourceChatId) _rawSystemNotify(report, sourceChatId);
   return report;
@@ -448,6 +470,8 @@ function _generateExecutiveStatusDashboard_() {
   const nvram = (memory && memory.NVRAM) || {};
   const basal = nvram.L4_Basal || { baseline_rhr: 43, target_steps: 8000, target_sleep_hrs: 7.3 };
   const sessionEvents = (nvram.L1_Working && nvram.L1_Working.session_events) || [];
+  const semanticMemory = typeof Memory_listSemantic === 'function' ? Memory_listSemantic({ limit: 8 }) : [];
+  const outcomeRecords = (((nvram.L3_Semantic || {}).outcome_ledger || {}).records || []).slice(-5).reverse();
 
   // 1. Status Biométrico - Consulta al Sensor Engine Vivo
   let liveSensorData = {};
@@ -515,6 +539,12 @@ function _generateExecutiveStatusDashboard_() {
   } else {
     l1DetailsText = '• <i>Sin intenciones ni síntomas recientes en NVRAM L1.</i>';
   }
+  const semanticText = semanticMemory.length
+    ? semanticMemory.map(function(atom) { return '• <code>' + _netEscapeHtml_(atom.id) + '</code> [' + _netEscapeHtml_(atom.type) + '/' + _netEscapeHtml_(atom.status) + '] ' + _netEscapeHtml_(atom.text); }).join('\n')
+    : '• Sin recuerdos semánticos guardados. Usa /recordar texto para conservar uno.';
+  const outcomeText = outcomeRecords.length
+    ? '\n<b>Sesiones confirmadas:</b> ' + outcomeRecords.map(function(record) { return '<code>' + _netEscapeHtml_(record.outcomeId) + '</code> ' + _netEscapeHtml_(record.assessment && record.assessment.observedOutcome || record.status); }).join(' | ')
+    : '\n<b>Sesiones confirmadas:</b> ninguna registrada.';
 
   // 4. Cola L0, Daemon Status & Firma Dinámica SRE
   const nowIso = new Date().toISOString();
@@ -526,9 +556,12 @@ function _generateExecutiveStatusDashboard_() {
          '📊 <b>1. Telemetría de Hardware:</b>\n' + biometryText + '\n\n' +
          '⚡ <b>2. Modo Cognitivo & Cooldown:</b>\n' + cognitiveModeText + '\n\n' +
          '🧬 <b>3. Memoria L1 Reciente:</b>\n' + l1DetailsText + '\n\n' +
-         '⚙️ <b>4. Infraestructura & Ingesta L0:</b>\n' + queueText + '\n\n' +
+         '🧠 <b>4. Memoria durable L3 (' + semanticMemory.length + ' recuerdos / ' + outcomeRecords.length + ' resultados recientes):</b>\n' + semanticText + outcomeText + '\n\n' +
+         '⚙️ <b>5. Infraestructura & Ingesta L0:</b>\n' + queueText + '\n\n' +
          '<i>Exocórtex calibrado y operando con Fricción Cognitiva Cero.</i>';
 }
+
+function _netEscapeHtml_(value) { return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 function registerTelegramWebhook() {
   return executeWithResilience("Registro_Webhook", () => {
@@ -574,7 +607,7 @@ function _isApprovedTelegramWebhookUrl_(value) {
 function doGet(e) {
   const action = String((e && e.parameter && e.parameter.action) || 'ping').trim();
   if (action === 'reauth' || action === 'auth') {
-    return ContentService.createTextOutput('BioOS does not configure Xiaomi accounts or read Health Connect directly. Sync Mi Fitness to Health Connect and connect an authorized Android bridge before enabling live telemetry.')
+    return ContentService.createTextOutput('BioOS checks its existing Google Fit REST OAuth path first. Run /doctor for a live read. If it returns 401/403, re-authorize the existing Apps Script deployment with its approved Google Fit read scopes. Health Connect direct needs a future Android bridge.')
       .setMimeType(ContentService.MimeType.TEXT);
   }
   if (action !== 'ping') {

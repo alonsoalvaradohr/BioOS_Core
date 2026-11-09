@@ -9,11 +9,13 @@ Configurar secretos en Apps Script Script Properties, nunca en archivos versiona
 - `TELEGRAM_CHAT_ID`
 - `TELEGRAM_SECRET_TOKEN`
 - `BIOOS_WEB_APP_URL`: URL HTTPS del proxy autenticado
-- `BIOOS_SENSOR_PROVIDER`: `health_connect` (default; no disponible sin puente), `mobvoi` o `google_fit_legacy` solo para instalaciones antiguas
+- `BIOOS_SENSOR_PROVIDER`: `health_connect`, `mobvoi` o `google_fit_legacy`. Si Health Connect no tiene bridge, el motor intenta Google Fit REST existente como compatibilidad.
 - `BIOOS_DB_ID`
 - `BIOOS_OPS_APPROVAL_TOKEN`: minimo 24 caracteres para migraciones protegidas
 - `VFS_FOLDER_ID`, `VFS_ROM_ID`, `VFS_NVRAM_ID`
 - `MOBVOI_API_ENDPOINT`, `MOBVOI_API_TOKEN` (solo si Mobvoi sigue siendo fuente activa)
+
+La memoria semantica L3 vive en la NVRAM de Drive; los vectores locales usan `bioos-es-hashvec-v1` (96 dimensiones), cap de 300 átomos y caducidad por tipo. Telegram: `/recordar texto`, `/memoria`, `/olvidar ID` y `/resultado descripción` (este último solo ante confirmación explícita). Los vectores son hashes de atributos y alias, no embeddings de un LLM.
 
 ## Validacion local
 
@@ -25,7 +27,7 @@ La validacion no demuestra que sensores, VFS, proxy o Telegram funcionen en runt
 
 ## Release a GAS
 
-El deploy automatizado actualiza únicamente los deployments explícitamente listados; admite uno o una lista CSV para cerrar deployments duplicados. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v8.7.1` para version `8.7.1`) y que `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS` apunta al deployment realmente usado por Telegram/proxy.
+El deploy automatizado actualiza únicamente los deployments explícitamente listados; admite uno o una lista CSV para cerrar deployments duplicados. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v<version>`) y que `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS` apunta al deployment realmente usado por Telegram/proxy.
 
 Configurar en GitHub Actions:
 

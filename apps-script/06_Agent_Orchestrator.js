@@ -11,6 +11,8 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     const memory = getSystemMemory();
     const rom = memory.ROM || {};
     const payload = _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context);
+    const memoryQuery = _orchestratorMemoryQuery_(triggerEvent, rawPayload, payload);
+    payload.semantic_memory_context = typeof Memory_searchSemantic === 'function' ? Memory_searchSemantic(memoryQuery, { topK: 6, minScore: 0.1 }) : [];
 
     let approved = {};
     let taskCount = 0;
@@ -31,6 +33,10 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     const output = isScheduledBriefing
       ? _buildEvidenceBriefing_(triggerEvent, payload, memory)
       : _synthesizeOrchestration_(rom, memory, payload, approved, taskCount, context);
+    if (triggerEvent === 'USER_FEEDBACK' && typeof Memory_captureUserFeedback === 'function') {
+      try { Memory_captureUserFeedback(payload.user_nlp, { requestId: context.requestId, eventId: context.eventId }); }
+      catch (memoryError) { _orchestratorTelemetry_(context, 'ERROR', '[MEMORY] No se consolidó memoria semántica.', { error: Core_normalizeError(memoryError).code }); }
+    }
     let compact = false;
     if (typeof ingestWorkingMemory === 'function') try {
       compact = ingestWorkingMemory(triggerEvent, { tokens: payload, hipotesis: approved, sintesis: output.resumen_ejecutivo || 'Sin síntesis.', requestId: context.requestId, eventId: context.eventId });
@@ -57,6 +63,8 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
   const reportedPlans = triggerEvent === 'MORNING_BRIEFING'
     ? recentContext.details.intenciones.filter(_isReportedTrainingIntent_).slice(0, 3)
     : [];
+  const durableMemories = (payload && Array.isArray(payload.semantic_memory_context) ? payload.semantic_memory_context : [])
+    .filter(function(atom) { return ['plan', 'symptom', 'load', 'nutrition', 'user_note'].indexOf(atom.type) !== -1; }).slice(0, 4);
   const fmt = function(value, suffix) {
     return value === null || value === undefined || value === '' ? 'sin dato' : String(value) + (suffix || '');
   };
@@ -88,6 +96,7 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
       lines.push('<b>Entrenamiento:</b> no encontre un plan reciente tuyo en la memoria de trabajo; no emitire distancia, ritmo ni intensidad.');
       lines.push('<b>Para completar el contexto:</b> responde con la sesion que planeas hoy y, si puedes, fatiga y molestias. BioOS la guardara como reportada, no como verificada.');
     }
+    if (durableMemories.length) lines.push('<b>Memoria durable relevante (recuerdos reportados, no sensores):</b> ' + durableMemories.map(function(atom) { return '[' + _orchestratorEscapeHtml_(atom.type) + '] ' + _orchestratorEscapeHtml_(atom.text) + ' (fuente ' + _orchestratorEscapeHtml_(atom.source) + ', estado ' + _orchestratorEscapeHtml_(atom.status) + ')'; }).join(' | '));
     lines.push('<b>Nutricion:</b> no hay registro de ingesta y peso suficiente para calcular cantidades.');
     lines.push('<b>Sueno:</b> solo se reporta duracion si llego del sensor; BioOS no conoce tu hora real de acostarte.');
   } else {
@@ -95,6 +104,7 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
     lines.push('<b>Entrenamiento:</b> BioOS no tiene una sesión completada y confirmada para esta jornada.');
     lines.push('<b>Descanso:</b> no se infiere una hora de sueño ni se recomienda un suplemento sin datos y preferencias registrados.');
     lines.push('<b>Para cerrar el registro:</b> ¿entrenaste hoy? Indica sesión y esfuerzo percibido (0-10).');
+    if (durableMemories.length) lines.push('<b>Memoria durable relevante:</b> ' + durableMemories.map(function(atom) { return '[' + _orchestratorEscapeHtml_(atom.type) + '] ' + _orchestratorEscapeHtml_(atom.text) + ' (' + _orchestratorEscapeHtml_(atom.status) + ')'; }).join(' | '));
   }
 
   return {
@@ -107,6 +117,8 @@ function _buildEvidenceBriefing_(triggerEvent, payload, memory) {
 function _isReportedTrainingIntent_(text) {
   return typeof text === 'string' && /\b(correr|carrera|rodaje|trotar|trote|running|run|bicicleta|bici|fuerza|pesas|gimnasio|entrenamiento|entrenar|natacion|movilidad|descanso|series|intervalos|caminar|caminata)\b/i.test(text);
 }
+
+function _orchestratorEscapeHtml_(value) { return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 function _orchestratorContext_(triggerEvent, rawPayload, supplied) {
   if (supplied && supplied.requestId && supplied.deadlineMs) return supplied;
@@ -257,12 +269,29 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
     }
   } else if (triggerEvent === 'USER_FEEDBACK') {
     payload.user_nlp = typeof compileQualitativeFeedback === 'function' ? compileQualitativeFeedback(rawPayload) : rawPayload;
+    payload.user_text = _orchestratorExtractUserText_(rawPayload);
     payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal);
   } else throw new Error('[CORE_FAULT] Trigger no reconocido: ' + triggerEvent);
 
   payload.cmo_long_term_trends = (((memory || {}).NVRAM || {}).L3_Semantic || {}).medical_knowledge_graph || {};
+  const ledger = (((memory || {}).NVRAM || {}).L3_Semantic || {}).outcome_ledger || {};
+  payload.confirmed_outcomes = Array.isArray(ledger.records) ? ledger.records.filter(function(record) { return record && Date.parse(record.expiresAt) > Date.now(); }).slice(-10) : [];
   payload.request_context = { requestId: context.requestId, eventId: context.eventId, source: context.source };
   return payload;
+}
+
+function _orchestratorMemoryQuery_(triggerEvent, rawPayload, payload) {
+  if (triggerEvent === 'USER_FEEDBACK') return String((payload && payload.user_text) || JSON.stringify((payload && payload.user_nlp) || rawPayload || '')).slice(0, 1000);
+  return triggerEvent === 'MORNING_BRIEFING' ? 'entrenamiento plan fatiga dolor sueno descanso preferencias recientes' : 'resultado entrenamiento fatiga dolor recuperacion sueno';
+}
+
+function _orchestratorExtractUserText_(rawPayload) {
+  var parsed = rawPayload;
+  try { if (typeof parsed === 'string') parsed = JSON.parse(parsed); } catch (_) { return String(rawPayload || '').slice(0, 1000); }
+  if (parsed && parsed._type === 'bioos_ingress_batch' && Array.isArray(parsed.items)) return parsed.items.slice(0, 10).map(function(item) { return [item.text, item.caption].filter(Boolean).join(' '); }).join(' ').slice(0, 1000);
+  if (Array.isArray(parsed)) return parsed.slice(0, 10).map(function(item) { return [item.text, item.caption].filter(Boolean).join(' '); }).join(' ').slice(0, 1000);
+  if (parsed && typeof parsed.text === 'string') return parsed.text.slice(0, 1000);
+  return typeof rawPayload === 'string' ? rawPayload.slice(0, 1000) : '';
 }
 
 function _safeETL(taskName, etlFunction, fallbackValue) {
@@ -479,6 +508,8 @@ Responde al input con análisis técnico, claridad ejecutiva y resuelve dudas o 
     '\n\n[CONTEXTO OPERATIVO]:' +
     '\nTelemetría Biometría: ' + _orchestratorJson_(payload.biometric_telemetry || payload, 1500, '{}') +
     '\nContexto L1 Reciente: ' + (l1Context.active ? l1Context.formattedDetails : 'Sin eventos cualitativos recientes.') +
+    '\nMemoria semantica durable (fuente/estado visibles; no convertir reporte en hecho medido): ' + _orchestratorJson_(payload.semantic_memory_context || [], 1800, '[]') +
+    '\nResultados de entrenamiento confirmados por el usuario (no inferidos): ' + _orchestratorJson_(payload.confirmed_outcomes || [], 1200, '[]') +
     '\nAgenda Workspace: ' + _orchestratorJson_(payload.workspace_agenda || [], 800, '[]') +
     '\nEventos L1 Raw: ' + _orchestratorJson_(sessionEvents.slice(-3), 1200, '[]');
 

@@ -1,61 +1,51 @@
-﻿# Roadmap BioOS - estado real al 2026-11-08
+# Roadmap BioOS - estado al 2026-11-09
 
-Este documento sustituye el plan de servicio de 2026-08-19. El codigo local, el runtime GAS y el canal biometrico movil son estados distintos: no se declara produccion lista por tener el codigo fuente.
+Codigo local, runtime GAS y flujos externos son estados distintos. Una correccion local no significa que Telegram ya use el cambio.
 
-## Estado confirmado
+## Hallazgos confirmados en el repositorio
 
-- La rama local `develop` apunta al commit compartido con `main`; el arbol estaba limpio antes de este trabajo.
-- El codigo local contiene proveedores Mobvoi y Google Fit REST. No contiene un lector de Health Connect ni un puente Android para Xiaomi Watch 2 / Mi Fitness.
-- La exportacion local de Health Connect contiene registros con origen Mi Fitness, por lo que el reloj y la aplicacion ya estan aportando algunos datos al telefono. Apps Script no puede leer esa base del telefono por si solo.
-- Los ciclos automaticos matutino y vespertino generaban texto libre con cifras no respaldadas. El informe semanal permitia inventar ACWR/volumen y guardar el resultado del LLM como historial; el ciclo mensual podia ajustar pesos persistentes sin outcomes verificados.
-- El proveedor Google Fit calculaba RHR con el promedio de `heart_rate.bpm`, que no es una medida especifica de frecuencia cardiaca en reposo.
+- BioOS 8.7.1 estaba desplegado; `BIOOS_SENSOR_PROVIDER` ausente cae a `health_connect`, que solo devolvia `HEALTH_CONNECT_ANDROID_BRIDGE_NOT_INSTALLED`.
+- El proyecto conserva lector OAuth REST de Google Fit y scopes. Alonso confirma que antes usaba Mobvoi/Health -> Google Fit y que Mi Fitness esta vinculado a Google Fit. Eso identifica la ruta que se debe restaurar antes de introducir otro bridge.
+- L1 guarda maximo 10 eventos. Antes no habia memoria semantica L3 utilizable ni persistence adapter del outcome ledger.
+- El Google Fit REST existente agrega pasos, distancia, calorias y segmentos de sueño; quita RHR inventado a partir de heart-rate general.
 
-## Cerrado en codigo local
+## Cambios locales de este ticket (aun requieren release)
 
-1. Los briefings automaticos programados ahora se forman de manera determinista con la fuente, hora de consulta y campos realmente disponibles. No generan ritmo, distancia, macros, suplementos, horas de acostarse ni afirmaciones de agenda sin evidencia.
-2. Se elimino el promedio de frecuencia cardiaca general del campo RHR del adaptador Google Fit.
-3. Se suprimieron el ACWR semanal generado por LLM y el autoajuste mensual de pesos. Se reactivaran solo tras conectar registros de entrenamiento fechados, con origen y resultado confirmado por Alonso.
-4. `/doctor`, `/reauth`, `/ping` y `/ayuda` ya no presentan Google Fit como conexion de Xiaomi ni exponen un fragmento del token OAuth.
-5. La preparacion de release usa `BIOOS_CONFIG.VERSION`, exige seleccionar un solo deployment GAS y no persiste el token OAuth temporal. El workflow valida el codigo en pull requests/push y despliega solo al publicar un tag versionado `v*`.
+1. Si `health_connect` esta seleccionado sin bridge, el motor consulta Google Fit existente como failover. Si Mobvoi falla, hace el mismo fallback. `/doctor` permite comprobar en vivo resultado, timestamp, fuente y campos.
+2. L3 persiste recuerdos versionados con fuente, estado, evidencia y caducidad. NLP de BioOS promueve a recuerdos reportados planes, sintomas, carga y nutricion; las sesiones no se marcan completadas por inferencia.
+3. Cada recuerdo tiene un vector local privado de 96 dimensiones (feature hashing + aliases españoles); retrieval puntúa coseno y entrega top-k al orquestador. No hay llamada a embeddings externos. No es un modelo transformer, así que sus límites de semántica dependen del solapamiento de términos y del mapa de sinónimos.
+4. L3 guarda el outcome ledger mediante NVRAM. `/resultado` escribe un resultado solo con confirmacion explicita; `/recordar`, `/memoria` y `/olvidar ID` permiten controlar recuerdos.
+5. L3 limita 300 recuerdos; NVRAM limita 4 MB. El registro de telemetria continua estructurado y separado de las memorias vectoriales.
 
-## Bloqueador: Mi Fitness -> Health Connect -> BioOS
+## Xiaomi Watch 2 y continuidad de datos
 
-La exportacion muestra que hay datos Xiaomi en Health Connect, pero no existe aun la ruta continua al servidor. Google indica que Mi Fitness puede compartir datos mediante Health Connect en Android; la disponibilidad incluye pasos, distancia, energia, sesiones de ejercicio, duracion/etapas de sueno y frecuencia cardiaca durante ejercicio. Las metricas disponibles dependen de lo que la aplicacion entregue. Google Fit REST esta en retirada durante 2026, asi que no debe ser la nueva integracion de largo plazo.
+Alonso reporta que Mi Fitness esta vinculada a Google Fit. El motor vuelve a probar esa ruta con OAuth en el deployment; todavía no se ha consultado `/doctor` después de este cambio, así que no afirmo que sus permisos y endpoint estén respondiendo.
 
-Trabajo necesario para completar esa ruta:
+El Xiaomi Watch 2 usa Wear OS, se vincula con Mi Fitness y sus especificaciones incluyen PPG óptico, acelerómetro, giroscopio, monitor de sueño y GNSS dual L1/L5. Xiaomi documenta sueño por fases, pulso durante sueño y resumen detallado de ejercicio en Mi Fitness. La disponibilidad de cada campo en Google Fit depende de la sincronización concreta. No derivar RHR de frecuencia cardíaca durante el ejercicio.
 
-1. Crear una app/puente Android con permisos Health Connect minimos y consentimiento visible del usuario.
-2. Descubrir en Health Connect el `DataOrigin` real de Mi Fitness en el telefono; no asumir `com.xiaomi.wearable`. Conservar timestamp y procedencia por registro, y deduplicar sesiones/intervalos antes de resumir.
-3. Autenticar el puente Android con clave ECDSA P-256 no exportable de Android Keystore y firma por solicitud; el Worker valida frescura, esquema y replay, y firma su reenvio a GAS con un HMAC separado. No reutilizar token Telegram ni aceptar datos sin origen.
-4. Pedir permisos Health Connect de lectura minimos, iniciar con sync en primer plano y hacer el sync de fondo opcional. Guardar snapshots acotados y mostrar en `/doctor` antiguedad, fuente, permisos y campos faltantes.
-5. Implementar el cerebro runtime por separado del harness: persistir atomos semanticos y outcomes confirmados con fuente/fecha/estado; L1 solo es contexto corto. Añadir embeddings versionados y recuperacion top-k despues del adaptador durable, con filtros de procedencia, recencia y consentimiento.
-6. Solo con outcomes confirmados habilitar tendencias semanales; ACWR requiere semanas de carga observada, no texto generado.
+Google recomienda Health Connect para nuevas integraciones Android y avisa que Fit APIs se deprecian durante 2026. Por eso la ruta se resuelve en dos pasos: (a) recuperar el canal Google Fit ya enlazado y medir qué campos entrega; (b) migrar a Health Connect antes de que Fit deje de funcionar, preservando auth/procedencia e historial. No construir otro bridge mientras el existente funcione.
 
-El adaptador no debe asignar RHR desde frecuencia cardiaca tomada durante ejercicio. En la exportacion revisada, los registros de RHR no estaban atribuidos a Mi Fitness; hasta encontrar una fuente RHR genuina, BioOS debe marcar RHR como no disponible.
+### Siguientes pasos verificables
 
-## Endurecimiento operativo v8.7.1
+1. Publicar release y consultar `/doctor`; guardar en evidencia solo fuente, antigüedad, estado y campos recibidos, sin tokens.
+2. Si falla, distinguir OAuth 401/403 de endpoint 4xx/5xx y de sincronización Mi Fitness vacía. Revisar Google Cloud/API/scopes y consentimiento existente sin desenlazar el reloj.
+3. Comparar un día de datos de Mi Fitness con Google Fit para pasos, distancia, calorías, sueño, pulso de ejercicio y sesión. Anotar campos que realmente llegan.
+4. Planear puente Health Connect de solo lectura si Google Fit ya no sirve. En el teléfono descubrir origen Mi Fitness, deduplicar registros, conservar timestamps y autenticar subida con clave ECDSA Android Keystore más HMAC servicio-a-servicio.
+5. Habilitar tendencias deportivas solo con varias semanas de entrenamiento observado y resultados confirmados por Alonso.
 
-- Health check de solo lectura; ya no crea/migra `Queue_NLP` ni cambia propiedades.
-- El código reconcilia triggers a briefings AM/PM y desprograma auditoria semanal/meta-evolucion. La reconciliacion del runtime sigue pendiente porque `scripts.run` devuelve 403 por proyecto Cloud no compartido.
-- Función de reporte integral preparada para Telegram vía Apps Script API `MYSELF`; envío pendiente: Google devuelve 403 porque el cliente OAuth y el proyecto Apps Script no comparten proyecto estándar de Cloud. No expone biometría ni secretos.
-- Release actualiza los deployments web seleccionados y crea/actualiza el endpoint de ejecucion privado del propietario.
-- El puente Mi Fitness/Health Connect sigue pendiente. Los sensores no se consideran operativos en vivo hasta su instalacion y verificacion.
-- El briefing matutino lee intenciones recientes reportadas en L1, las distingue de una sesión verificada y explicita que el perfil basal no es telemetría del día.
+## Estado del segundo cerebro
 
-## Criterios para declarar el roadmap completado
+El diseño y código local están en [`ADR-002`](adr/ADR-002-runtime-brain-xiaomi-healthconnect.md). Las memorias durables quedan en NVRAM/Drive; una matriz `N x 96` se forma en cada búsqueda. Tensores no son necesarios para este volumen. `/memoria` informa estado; el despliegue de 8.7.1 aún no incluye estas funciones.
 
-- [ ] Puente Health Connect instalado, permiso aprobado y sync Mi Fitness visible.
-- [ ] `/doctor` muestra datos reales recientes, procedencia Xiaomi y antiguedad; omite RHR si no existe.
-- [ ] Briefing AM/PM no inventa métricas ni recomendaciones numericas; cada valor puede rastrearse a un registro.
-- [ ] Outcome ledger solo acepta confirmaciones del usuario y conserva procedencia/timestamp.
-- [ ] Auditoria semanal usa al menos cuatro semanas de sesiones confirmadas; sin cobertura suficiente reporta “datos insuficientes”.
-- [ ] La release tag deploya un unico deployment estable; se confirma `/ping`, `/doctor` y un mensaje real despues del rollout.
-- [ ] El health check de produccion no informa WARN por sensores ni errores pendientes de VFS, permisos o proxy.
+## Criterios de salida
 
-Hasta que se cumplan esos puntos, el sistema esta en endurecimiento local, no en “autonomia de produccion”.
+- [ ] `/doctor` obtiene métricas recientes desde Google Fit y muestra fuente/antigüedad; los campos ausentes siguen `null`.
+- [ ] Mi Fitness -> Google Fit es comparado con la app y su procedencia confirmada.
+- [ ] Briefing AM/PM usa recuerdo relevante sin presentar reportes como telemetría.
+- [ ] `Memory_storeSemantic` persiste y recupera; el usuario puede recordar/listar/borrar.
+- [ ] `/resultado` registra solo outcomes explícitamente confirmados y preserva timestamps/procedencia.
+- [ ] Tendencias semanales usan al menos cuatro semanas observadas y reportan insuficiencia si falta cobertura.
+- [ ] El flujo de autenticación Google Fit migra a Health Connect con permisos mínimos antes de retirarse la API Fit.
+- [ ] Release tag activa un único deployment estable; `/ping` y `/doctor` verificados tras rollout.
 
-## Segundo cerebro runtime: estado real y diseño
-
-La especificacion en [`ADR-002`](adr/ADR-002-runtime-brain-xiaomi-healthconnect.md) separa el harness del cerebro conversacional de BioOS. A la fecha, L1 solo conserva hasta 10 eventos; el outcome ledger es una funcion pura sin persistencia; no hay proveedor de embeddings ni indice vectorial. Por tanto, la memoria semantica activa aun no existe en runtime.
-
-Un embedding es un vector de `d` componentes; `N` recuerdos forman una matriz `N x d` que un indice busca por similitud. No hace falta guardar tensores: las series biometricas siguen siendo registros estructurados con timestamps. El primer proveedor propuesto es BGE-M3 + Vectorize con cuotas gratuitas y limites locales, si se confirma la cuenta Cloudflare y se aprueba la politica de retencion. Sin cuota/disponibilidad, la recuperacion estructurada/por palabras clave sigue operativa; no activar facturacion automaticamente.
+Hasta lograrlo, los cambios locales de código no se declaran activos en Telegram ni como automatización plenamente operativa.

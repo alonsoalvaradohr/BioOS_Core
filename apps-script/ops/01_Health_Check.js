@@ -131,13 +131,13 @@ function _opsCheckDatabase_() {
 
 function _opsCheckSensors_() {
   const props = PropertiesService.getScriptProperties();
-  const provider = String(props.getProperty('BIOOS_SENSOR_PROVIDER') || 'health_connect').trim().toLowerCase();
-  if (provider === 'health_connect') return _opsResult_('sensors', 'WARN', 'Health Connect esta seleccionado, pero el puente Android para Mi Fitness aun no esta instalado.', { provider: provider, ready: false });
+  const provider = String(props.getProperty('BIOOS_SENSOR_PROVIDER') || 'google_fit_legacy').trim().toLowerCase();
+  if (provider === 'health_connect') return _opsResult_('sensors', 'WARN', 'Health Connect directo no tiene puente; BioOS intenta Google Fit REST como ruta de compatibilidad y /doctor valida si entrega datos.', { provider: provider, fallbackProvider: 'google_fit_legacy', ready: false });
   if (provider === 'mobvoi') {
     const configured = !!(props.getProperty('MOBVOI_API_ENDPOINT') && props.getProperty('MOBVOI_API_TOKEN'));
     return _opsResult_('sensors', configured ? 'PASS' : 'FAIL', configured ? 'Proveedor Mobvoi configurado de forma explicita.' : 'Mobvoi seleccionado, pero faltan sus credenciales.', { provider: provider, ready: configured });
   }
-  if (provider === 'google_fit_legacy') return _opsResult_('sensors', 'WARN', 'Google Fit REST esta seleccionado como proveedor heredado; no equivale a la integracion Mi Fitness/Health Connect.', { provider: provider, ready: false });
+  if (provider === 'google_fit_legacy') return _opsResult_('sensors', 'WARN', 'Google Fit REST esta seleccionado como ruta de compatibilidad; ejecute /doctor para validar OAuth y datos recientes. La API esta en retirada durante 2026.', { provider: provider, ready: false });
   return _opsResult_('sensors', 'FAIL', 'BIOOS_SENSOR_PROVIDER no es compatible.', { provider: provider, ready: false });
 }
 

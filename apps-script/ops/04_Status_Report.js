@@ -15,7 +15,7 @@ function sendBioOSFullSystemReport() {
   const l3 = nvram.L3_Semantic || {};
   const l4 = nvram.L4_Basal || {};
   const triggers = ScriptApp.getProjectTriggers().map(function(trigger) { return trigger.getHandlerFunction(); }).sort();
-  const provider = String(PropertiesService.getScriptProperties().getProperty('BIOOS_SENSOR_PROVIDER') || 'health_connect').trim().toLowerCase();
+  const provider = String(PropertiesService.getScriptProperties().getProperty('BIOOS_SENSOR_PROVIDER') || 'google_fit_legacy').trim().toLowerCase();
 
   let health = null;
   try { health = typeof healthCheckBioOS === 'function' ? healthCheckBioOS() : null; } catch (error) {}
@@ -24,7 +24,7 @@ function sendBioOSFullSystemReport() {
     : 'No disponible';
 
   const sensorStatus = provider === 'health_connect'
-    ? 'Health Connect seleccionado; puente Android Mi Fitness no instalado.'
+    ? 'Health Connect seleccionado; se intenta fallback a Google Fit, el informe no consultó sensores.'
     : provider + ' seleccionado; el informe no consultó sensores.';
   const report = [
     '<b>BioOS | Informe de estado</b>',
@@ -38,7 +38,7 @@ function sendBioOSFullSystemReport() {
     '<b>Memoria durable</b>',
     'Esquema: ' + String(nvram._bioos_memory_schema || 'desconocido') + ' | ROM: ' + String(memory && memory.ROM && memory.ROM._version || 'no disponible') + '.',
     'L1: ' + l1.length + ' eventos | L2: ' + archives.length + ' archivos semanales y ' + lake.length + ' elementos en data lake | L3: ' +
-      (Array.isArray(l3.calibration_deltas) ? l3.calibration_deltas.length : 0) + ' deltas de calibración | L4: perfil basal ' +
+      (Array.isArray(l3.semantic_memories) ? l3.semantic_memories.length : 0) + ' recuerdos vectorizados, ' + (Array.isArray(l3.calibration_deltas) ? l3.calibration_deltas.length : 0) + ' deltas y ' + ((l3.outcome_ledger && Array.isArray(l3.outcome_ledger.records)) ? l3.outcome_ledger.records.length : 0) + ' outcomes confirmados | L4: perfil basal ' +
       (Object.keys(l4).length ? 'presente' : 'ausente') + ', objetivo de sueño ' + (l4.target_sleep_hrs == null ? 'sin dato' : 'configurado') + '.',
     'Se muestran estructura y conteos; no se incluyen biométricos ni preferencias personales.',
     '',

@@ -16,6 +16,8 @@ compilador → especialistas → auditor → orquestador
 NVRAM L1-L4 + Outcome Ledger + respuesta Telegram
 ```
 
+El cerebro de runtime incluye memoria semantica L3: atomos con fuente/estado/vencimiento, vector local 96D y top-k por coseno. L1 queda como buffer de turno. Los outcomes completados solo entran con confirmacion del usuario.
+
 Apps Script no expone al evento `doPost` las cabeceras HTTP originales. Por eso Telegram no debe apuntar directamente al deployment `/exec`: el proxy valida la cabecera secreta y entrega al script una prueba verificable. El endpoint directo permanece fail-closed.
 
 ## Capas
@@ -24,9 +26,9 @@ Apps Script no expone al evento `doPost` las cabeceras HTTP originales. Por eso 
 |---|---|---|
 | Core | Contratos, errores, contexto y parsing estructurado | `apps-script/core/` |
 | Ingesta | Webhook, idempotencia, cola y workers | `03b_Net_Webhook.js`, `02b_DB_Repository.js`, `11_Net_Daemons.js` |
-| Sensores | Selección y normalización de proveedores | `04_Sensor_Engine.js`, `apps-script/sensors/` |
+| Sensores | Selección y normalización de proveedores; fallback a Google Fit existente mientras Health Connect no tenga bridge | `04_Sensor_Engine.js`, `apps-script/sensors/` |
 | Cognición | Compilación, especialistas, auditoría y síntesis | `05_*` a `08_*`, `apps-script/agents/` |
-| Memoria | NVRAM transaccional, recuperación y resultados | `02_Mem_Hierarchical.js`, `apps-script/memory/` |
+| Memoria | NVRAM transaccional, recuperación, recuerdos vectorizados L3 y ledger persistido | `02_Mem_Hierarchical.js`, `apps-script/memory/` |
 | Operación | Boot no mutante, preflight y telemetría | `99_System_Boot.js`, `apps-script/ops/` |
 
 ## Invariantes
