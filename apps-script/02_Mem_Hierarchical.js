@@ -352,6 +352,32 @@ function Memory_listBiometricObservations(options) {
     .slice(-limit).map(function(item) { return item.payload; });
 }
 
+/** Structured L2 archive for sleep session boundaries; timestamps stay queryable rather than embedded as prose. */
+function Memory_storeSleepSessions(history) {
+  if (!history || history.source !== 'google_fit' || !Array.isArray(history.sessions) || !history.sessions.length) return { ok: false, stored: 0, reason: 'NO_SLEEP_SESSIONS' };
+  var recordedAt = history.fetchedAt || new Date().toISOString();
+  var sessions = history.sessions.filter(function (s) { return s && s.startMs > 0 && s.endMs > s.startMs; }).slice(-32).map(function (s) {
+    return { sessionId: String(s.id || (s.startMs + '-' + s.endMs)), startMs: Number(s.startMs), endMs: Number(s.endMs), durationMinutes: Number(s.durationMinutes) || Math.round((s.endMs - s.startMs) / 60000), source: String(s.source || history.source), sourceKind: String(s.sourceKind || 'google_fit_sleep_session'), recordedAt: recordedAt };
+  });
+  if (!sessions.length) return { ok: false, stored: 0, reason: 'NO_VALID_SLEEP_SESSIONS' };
+  mutateNVRAM(function (state) {
+    sessions.forEach(function (session) {
+      state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function (item) { return !(item && item.data_type === 'sleep_session' && item.payload && item.payload.sessionId === session.sessionId); });
+      state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'sleep_session', payload: session });
+    });
+  }, 'Mem_Ingest_Sleep_Sessions');
+  return { ok: true, stored: sessions.length, source: history.source };
+}
+
+function Memory_listSleepSessions(options) {
+  var opts = options || {}, startMs = Number(opts.startMs) || 0, endMs = Number(opts.endMs) || Date.now();
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function (item) {
+    var s = item && item.data_type === 'sleep_session' && item.payload;
+    return s && s.startMs < endMs && s.endMs > startMs;
+  }).map(function (item) { return item.payload; }).sort(function (a, b) { return a.startMs - b.startMs; });
+}
+
 /** Obsidian-like view assembled from semantic atoms and their evidence IDs. */
 function Memory_buildEvidenceGraph_(atoms, observations) {
   atoms = Array.isArray(atoms) ? atoms : []; observations = Array.isArray(observations) ? observations : [];

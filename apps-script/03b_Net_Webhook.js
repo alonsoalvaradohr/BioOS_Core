@@ -461,6 +461,15 @@ function _diagnoseSensorsLive_(sourceChatId) {
     lines.push('Sue?o: ' + (data.sleepMinutes === null || data.sleepMinutes === undefined || data.sleepMinutes <= 0 ? 'sin dato' : (data.sleepMinutes / 60).toFixed(1) + ' h'));
     const received = ['steps', 'distanceKm', 'caloriesKcal', 'rhrBpm', 'sleepMinutes'].filter(function(key) { return data[key] !== null && data[key] !== undefined && data[key] > 0; });
     lines.push('Campos recibidos: ' + (received.length ? received.join(', ') : 'ninguno'));
+    const metricReport = snap && snap.metadata && snap.metadata.telemetryReport;
+    if (metricReport) {
+      const reportLines = Object.keys(metricReport).map(function(name) {
+        const metric = metricReport[name] || {}, counts = metric.metricPointCounts || {};
+        const count = Object.keys(counts).reduce(function(sum, key) { return sum + Number(counts[key] || 0); }, 0);
+        return name + ': HTTP ' + (metric.httpStatus || 'sin código') + ', puntos ' + count;
+      });
+      lines.push('Respuesta por consulta Google Fit: ' + (reportLines.join(' | ') || 'sin desglose'));
+    }
     lines.push('Pulso actual en vivo: no disponible por esta ruta cloud; RHR solo si el proveedor lo sincroniza explícitamente.');
   } catch (error) {
     lines.push('Lectura fallida: ' + String(error && error.message || error).slice(0, 180));

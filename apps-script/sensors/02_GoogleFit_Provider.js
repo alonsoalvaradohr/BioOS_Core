@@ -122,10 +122,14 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
       successfulQueries++;
       try {
         var parsed = Sensor_boundedJson_(bodyText);
-        if (parsed && Array.isArray(parsed.bucket)) {
-          combinedBuckets = combinedBuckets.concat(parsed.bucket);
-        }
-        telemetryReport[bName] = { ok: true, httpStatus: status };
+        var parsedBuckets = parsed && Array.isArray(parsed.bucket) ? parsed.bucket : [];
+        combinedBuckets = combinedBuckets.concat(parsedBuckets);
+        var metricPointCounts = {};
+        parsedBuckets.forEach(function (bucket) { (bucket.dataset || []).forEach(function (dataset) {
+          var type = String(dataset.dataTypeName || dataset.dataSourceId || bucketsDefs[idx].name);
+          metricPointCounts[type] = (metricPointCounts[type] || 0) + ((dataset.point || []).length);
+        }); });
+        telemetryReport[bName] = { ok: true, httpStatus: status, metricPointCounts: metricPointCounts };
       } catch (parseErr) {
         telemetryReport[bName] = { ok: false, httpStatus: status, error: 'JSON_PARSE_ERROR' };
       }
@@ -145,17 +149,48 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
 
   var parsedAggregate = { bucket: combinedBuckets };
   var data = Sensor_GoogleFit_normalizeAggregate_(parsedAggregate);
+  var sleepSessions = Sensor_GoogleFit_sessionsFromSleepBuckets_(combinedBuckets);
 
   var hasPoints = data.steps !== null || data.rhrBpm !== null || data.caloriesKcal !== null || data.distanceKm !== null || data.sleepMinutes !== null;
 
   return Sensor_snapshot('google_fit', range.sinceMs, data, null, {
     telemetryReport: telemetryReport,
+    sleepSessions: sleepSessions,
     successfulQueries: successfulQueries,
     totalQueries: bucketsDefs.length,
     dailyWindow: { startMs: range.sinceMs, endMs: range.endMs },
     sleepWindow: { startMs: range.sleepSinceMs || range.endMs - Sensor_HOURS_24_MS, endMs: range.sleepEndMs || range.endMs },
     timeZone: (typeof Session !== 'undefined' && Session.getScriptTimeZone) ? Session.getScriptTimeZone() : 'unknown',
     emptyDataWindow: !hasPoints
+  });
+}
+
+function Sensor_GoogleFit_sessionsFromSleepBuckets_(buckets) {
+  var points = [];
+  (buckets || []).forEach(function (bucket) { (bucket.dataset || []).forEach(function (dataset) {
+    (dataset.point || []).forEach(function (point) {
+      if (Sensor_GoogleFit_dataType_(point, dataset) !== 'sleep') return;
+      var value = point.value && point.value[0] || {}, stage = Number(value.intVal), start = Math.floor(Number(point.startTimeNanos) / 1000000), end = Math.floor(Number(point.endTimeNanos) / 1000000);
+      if (stage < 0 || stage > 6 || !isFinite(start) || !isFinite(end) || end <= start) return;
+      points.push({ startMs: start, endMs: end, stage: stage });
+    });
+  }); });
+  points.sort(function (a, b) { return a.startMs - b.startMs; });
+  var sessions = [], current = null;
+  points.forEach(function (point) {
+    if (!current || point.startMs - current.endMs > 2 * 60 * 60 * 1000) {
+      if (current) sessions.push(current);
+      current = { id: 'sleep-segments-' + point.startMs, startMs: point.startMs, endMs: point.endMs, source: 'Google Fit sleep segments', sourceKind: 'google_fit_sleep_segments_window' };
+    } else current.endMs = Math.max(current.endMs, point.endMs);
+  });
+  if (current) sessions.push(current);
+  return sessions.map(function (session) {
+    session.bedtimeDate = Utilities.formatDate(new Date(session.startMs), 'America/Costa_Rica', 'yyyy-MM-dd');
+    session.bedtimeLocal = Utilities.formatDate(new Date(session.startMs), 'America/Costa_Rica', 'HH:mm');
+    session.wakeDate = Utilities.formatDate(new Date(session.endMs), 'America/Costa_Rica', 'yyyy-MM-dd');
+    session.wakeLocal = Utilities.formatDate(new Date(session.endMs), 'America/Costa_Rica', 'HH:mm');
+    session.durationMinutes = Math.round((session.endMs - session.startMs) / 60000);
+    return session;
   });
 }
 
@@ -195,6 +230,59 @@ function Sensor_GoogleFit_fetchDailyHistory_(startMs, endMs) {
     var rows = Object.keys(byDay).sort().map(function (key) { var d = byDay[key]; if (d.steps === null && d.distanceKm === null && d.sleepMinutes === null && d.caloriesKcal === null) return d; if (d.distanceKm !== null) d.distanceKm = Number(d.distanceKm.toFixed(2)); if (d.caloriesKcal !== null) d.caloriesKcal = Math.round(d.caloriesKcal); if (d.sleepMinutes !== null) d.sleepMinutes = Math.round(d.sleepMinutes); return d; });
     return { available: true, source: 'google_fit', fetchedAt: new Date().toISOString(), window: { startMs: startMs, endMs: endMs }, days: rows };
   } catch (error) { return { available: false, source: 'google_fit', reason: Sensor_safeError_(error), days: [] }; }
+}
+
+/** Read exact sleep session bounds and stage points from Google Fit for circadian questions. */
+function Sensor_GoogleFit_fetchSleepHistory_(startMs, endMs) {
+  if (typeof ScriptApp === 'undefined' || typeof UrlFetchApp === 'undefined') return { available: false, reason: 'GOOGLE_FIT_UNSUPPORTED_RUNTIME', sessions: [], segments: [] };
+  var span = Number(endMs) - Number(startMs), dayMs = Sensor_HOURS_24_MS;
+  if (!(span > 0 && span <= 32 * dayMs)) return { available: false, reason: 'HISTORY_WINDOW_INVALID', sessions: [], segments: [] };
+  var token = ScriptApp.getOAuthToken();
+  if (!token) return { available: false, reason: 'GOOGLE_FIT_AUTH_UNAVAILABLE', sessions: [], segments: [] };
+  var queryStart = Number(startMs) - dayMs, queryEnd = Number(endMs) + dayMs;
+  var sessionUrl = 'https://www.googleapis.com/fitness/v1/users/me/sessions?activityType=72&startTime=' + encodeURIComponent(new Date(queryStart).toISOString()) + '&endTime=' + encodeURIComponent(new Date(queryEnd).toISOString());
+  var requests = [
+    { url: sessionUrl, method: 'get', headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: false },
+    { url: 'https://www.googleapis.com/fitness/v1/users/me/dataset:aggregate', method: 'post', contentType: 'application/json', payload: JSON.stringify({ startTimeMillis: String(queryStart), endTimeMillis: String(queryEnd), aggregateBy: [{ dataTypeName: 'com.google.sleep.segment' }] }), headers: { Authorization: 'Bearer ' + token }, muteHttpExceptions: true, followRedirects: false }
+  ];
+  try {
+    var responses = UrlFetchApp.fetchAll(requests), sessionResponse = responses[0], segmentResponse = responses[1];
+    var sessions = [], segments = [], status = { sessions: sessionResponse.getResponseCode(), segments: segmentResponse.getResponseCode() };
+    if (status.sessions >= 200 && status.sessions < 300) {
+      var sessionData = Sensor_boundedJson_(sessionResponse.getContentText());
+      (sessionData.session || []).forEach(function (s) {
+        var start = Number(s.startTimeMillis), end = Number(s.endTimeMillis);
+        if (!isFinite(start) || !isFinite(end) || start <= 0 || end <= start) return;
+        var app = s.application || {};
+        sessions.push({ id: String(s.id || start + '-' + end), startMs: start, endMs: end, durationMinutes: Math.round((end - start) / 60000), bedtimeDate: Utilities.formatDate(new Date(start), 'America/Costa_Rica', 'yyyy-MM-dd'), bedtimeLocal: Utilities.formatDate(new Date(start), 'America/Costa_Rica', 'HH:mm'), wakeDate: Utilities.formatDate(new Date(end), 'America/Costa_Rica', 'yyyy-MM-dd'), wakeLocal: Utilities.formatDate(new Date(end), 'America/Costa_Rica', 'HH:mm'), source: String(app.name || app.packageName || 'Google Fit session'), activityType: Number(s.activityType) });
+      });
+    }
+    if (status.segments >= 200 && status.segments < 300) {
+      var aggregate = Sensor_boundedJson_(segmentResponse.getContentText());
+      (aggregate.bucket || []).forEach(function (bucket) { (bucket.dataset || []).forEach(function (dataset) { (dataset.point || []).forEach(function (point) {
+        var value = point.value && point.value[0] || {}, stage = Number(value.intVal), startNs = Number(point.startTimeNanos), endNs = Number(point.endTimeNanos);
+        if ([0, 2, 4, 5, 6].indexOf(stage) === -1 || !isFinite(startNs) || !isFinite(endNs) || endNs <= startNs) return;
+        var start = Math.floor(startNs / 1000000), end = Math.floor(endNs / 1000000);
+        segments.push({ startMs: start, endMs: end, stage: stage, minutes: Math.round((end - start) / 60000) });
+      }); }); });
+    }
+    sessions.sort(function (a, b) { return a.startMs - b.startMs; });
+    segments.sort(function (a, b) { return a.startMs - b.startMs; });
+    if (!sessions.length && segments.length) {
+      var group = null, groups = [];
+      segments.forEach(function (segment) {
+        if (!group || segment.startMs - group.endMs > 90 * 60000) { if (group) groups.push(group); group = { startMs: segment.startMs, endMs: segment.endMs, durationMinutes: 0 }; }
+        else group.endMs = Math.max(group.endMs, segment.endMs);
+        group.durationMinutes += segment.minutes;
+      });
+      if (group) groups.push(group);
+      sessions = groups.map(function (g) { return { id: 'segments-' + g.startMs, startMs: g.startMs, endMs: g.endMs, durationMinutes: g.durationMinutes,
+        bedtimeDate: Utilities.formatDate(new Date(g.startMs), 'America/Costa_Rica', 'yyyy-MM-dd'), bedtimeLocal: Utilities.formatDate(new Date(g.startMs), 'America/Costa_Rica', 'HH:mm'),
+        wakeDate: Utilities.formatDate(new Date(g.endMs), 'America/Costa_Rica', 'yyyy-MM-dd'), wakeLocal: Utilities.formatDate(new Date(g.endMs), 'America/Costa_Rica', 'HH:mm'), source: 'Google Fit sleep segments', sourceKind: 'google_fit_sleep_segments_window' }; });
+    }
+    var anyOk = (status.sessions >= 200 && status.sessions < 300) || (status.segments >= 200 && status.segments < 300);
+    return { available: anyOk, source: 'google_fit', fetchedAt: new Date().toISOString(), window: { startMs: startMs, endMs: endMs }, queryWindow: { startMs: queryStart, endMs: queryEnd }, status: status, sessions: sessions, segments: segments, reason: anyOk ? null : 'GOOGLE_FIT_SLEEP_HISTORY_HTTP_ERROR' };
+  } catch (error) { return { available: false, source: 'google_fit', reason: Sensor_safeError_(error), sessions: [], segments: [] }; }
 }
 
 function Sensor_GoogleFit_normalizeAggregate_(payload) {

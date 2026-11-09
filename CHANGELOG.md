@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.11.0 - 2026-11-09
+
+- Historical sleep-time questions now use a deterministic route even without the words “average” or “sleep”.
+- Google Fit history reads sleep sessions (`activityType=72`) and exact sleep-stage points, preserving start/end timestamps and per-endpoint HTTP/point counts.
+- Session boundaries are persisted as structured L2 `sleep_session` records and can be retrieved later if the source is temporarily unavailable; no times are fabricated from baselines.
+- `/doctor` shows HTTP status and point counts for each Google Fit aggregate, distinguishing successful empty queries from populated fields.
+
 ## 8.10.0 - 2026-11-09
 
 - Morning briefing reports the prior local waking day and preceding night's sleep; evening briefing reports activity from the current local day. Both print their measurement window.

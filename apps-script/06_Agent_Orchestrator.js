@@ -16,6 +16,9 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
         const storedObservation = Memory_storeBiometricObservation(payload.biometric_telemetry);
         if (storedObservation && storedObservation.ok) payload.current_observation_id = storedObservation.observationId;
       }
+      if (typeof Memory_storeSleepSessions === 'function' && payload.biometric_telemetry && Array.isArray(payload.biometric_telemetry.sleepSessions)) {
+        Memory_storeSleepSessions({ source: payload.biometric_telemetry.source, fetchedAt: payload.biometric_telemetry.fetchedAt, sessions: payload.biometric_telemetry.sleepSessions });
+      }
       payload.biometric_history = typeof Memory_listBiometricObservations === 'function' ? Memory_listBiometricObservations({ limit: 14 }) : [];
     } catch (observationError) { _orchestratorTelemetry_(context, 'ERROR', '[MEMORY] No se consolidó observación biométrica estructurada.', { error: Core_normalizeError(observationError).code }); }
     const memoryQuery = _orchestratorMemoryQuery_(triggerEvent, rawPayload, payload);
@@ -43,7 +46,7 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     const output = isScheduledBriefing
       ? _buildEvidenceBriefing_(triggerEvent, payload, memory)
       : isHistoricalAnalytics
-        ? _buildHistoricalAnalyticsAnswer_(payload)
+        ? (payload.history_request.type === 'sleep_schedule' ? _buildHistoricalSleepScheduleAnswer_(payload) : _buildHistoricalAnalyticsAnswer_(payload))
       : _synthesizeOrchestration_(rom, memory, payload, approved, taskCount, context);
     if (triggerEvent === 'USER_FEEDBACK' && typeof Memory_captureUserFeedback === 'function') {
       try { Memory_captureUserFeedback(payload.user_nlp, { requestId: context.requestId, eventId: context.eventId, observationId: payload.current_observation_id }); }
@@ -246,6 +249,7 @@ function _extractBiometricTelemetry_(rawPayload, basal, requestedWindow) {
       fetchedAt: (liveSnapshot && liveSnapshot.fetchedAt) || new Date().toISOString(),
       window: (liveSnapshot && liveSnapshot.metadata && liveSnapshot.metadata.dailyWindow) || null,
       sleepWindow: (liveSnapshot && liveSnapshot.metadata && liveSnapshot.metadata.sleepWindow) || null,
+      sleepSessions: (liveSnapshot && liveSnapshot.metadata && Array.isArray(liveSnapshot.metadata.sleepSessions)) ? liveSnapshot.metadata.sleepSessions : [],
       timeZone: (liveSnapshot && liveSnapshot.metadata && liveSnapshot.metadata.timeZone) || 'unknown',
       data: {
         rhrBpm: rhr,
@@ -289,14 +293,42 @@ function _orchestratorReportWindow_(triggerEvent, nowMs) {
 }
 
 function _orchestratorHistoryRequest_(question) {
-  var q = String(question || '').toLowerCase();
-  if (!/(semana pasada|ultima semana|última semana|promedio|media)/i.test(q) || !/(sueno|sueño|actividad|pasos|distancia)/i.test(q)) return null;
+  var q = String(question || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  var previousWeek = /(semana pasada|semana que paso|ultima semana|ultimos 7 dias)/i.test(q);
+  var sleepSchedule = /(acost|dormi|dormir|levante|despert|hora de dormir|hora de despertar|hora de acost|hora de levant|cama)/i.test(q);
+  var weeklyAverage = /(promedio|media|promedios)/i.test(q) && /(sueno|actividad|pasos|distancia|calorias)/i.test(q);
+  if (!previousWeek || (!sleepSchedule && !weeklyAverage)) return null;
   var todayStart = Sensor_localDayStartMs_(Date.now()), weekday = (new Date(todayStart).getUTCDay() + 6) % 7;
   var monday = todayStart - weekday * Sensor_HOURS_24_MS, start = monday - 7 * Sensor_HOURS_24_MS;
   var tz = 'America/Costa_Rica';
-  return { type: 'previous_calendar_week', startMs: start, endMs: monday,
+  return { type: sleepSchedule ? 'sleep_schedule' : 'previous_calendar_week', startMs: start, endMs: monday,
     startLabel: Utilities.formatDate(new Date(start), tz, 'yyyy-MM-dd'),
     endLabel: Utilities.formatDate(new Date(monday - 1), tz, 'yyyy-MM-dd') };
+}
+
+function _buildHistoricalSleepScheduleAnswer_(payload) {
+  var req = payload.history_request, result = payload.historical_sleep || {}, sessions = Array.isArray(result.sessions) ? result.sessions : [];
+  var startMs = req.startMs, endMs = req.endMs, tz = 'America/Costa_Rica';
+  var fields = sessions.map(function (session) {
+    var start = Number(session.startMs), end = Number(session.endMs);
+    if (!isFinite(start) || !isFinite(end) || end <= start) return null;
+    return { bedtimeDate: session.bedtimeDate || Utilities.formatDate(new Date(start), tz, 'yyyy-MM-dd'), bedtime: session.bedtimeLocal || Utilities.formatDate(new Date(start), tz, 'HH:mm'),
+      wakeDate: session.wakeDate || Utilities.formatDate(new Date(end), tz, 'yyyy-MM-dd'), wake: session.wakeLocal || Utilities.formatDate(new Date(end), tz, 'HH:mm'), startMs: start, endMs: end, source: session.source || result.source || 'memoria L2', sourceKind: session.sourceKind || 'google_fit_sleep_session' };
+  }).filter(Boolean);
+  var startDate = req.startLabel, endDate = req.endLabel;
+  var beds = fields.filter(function (row) { return row.bedtimeDate >= startDate && row.bedtimeDate <= endDate; }).sort(function (a, b) { return b.bedtime.localeCompare(a.bedtime); });
+  var wakes = fields.filter(function (row) { return row.wakeDate >= startDate && row.wakeDate <= endDate; }).sort(function (a, b) { return a.wake.localeCompare(b.wake); });
+  var fromLive = result.available === true;
+  var sourceLabel = fromLive ? 'Google Fit' : 'memoria L2 BioOS';
+  var lines = ['<b>Horario de sueño · semana anterior</b>', 'Periodo local: ' + startDate + ' a ' + endDate + ' (America/Costa_Rica).'];
+  if (beds.length) lines.push('Inicio de sesión de sueño más tardío: <b>' + beds[0].bedtime + '</b>, noche del ' + beds[0].bedtimeDate + ' (' + sourceLabel + ').');
+  else lines.push('Acostarte: sin marca de inicio de sesión verificable para ese periodo.');
+  if (wakes.length) lines.push('Fin de sesión de sueño más temprano: <b>' + wakes[0].wake + '</b>, mañana del ' + wakes[0].wakeDate + ' (' + sourceLabel + ').');
+  else lines.push('Levantarte: sin marca de fin de sesión verificable para ese periodo.');
+  if (result.status) lines.push('Estado de consulta Fit: sesiones HTTP ' + result.status.sessions + ' (' + sessions.length + ' registros); etapas HTTP ' + result.status.segments + ' (' + (result.segments || []).length + ' puntos).');
+  if (fields.length) lines.push('Sesiones observadas: ' + fields.length + '. Las horas son límites registrados por Google Fit; no prueban el momento exacto de acostarse/despertarse si la app no captura esos eventos. Fuente/lectura: ' + sourceLabel + ' / ' + (result.fetchedAt || fields[0].recordedAt || 'historial L2') + '.');
+  else lines.push('BioOS consultó sesiones de sueño y etapas. Google Fit respondió, pero no contiene segmentos/sesiones para esta ventana en el canal consultado; la memoria durable tampoco tiene capturas anteriores. No sustituí la ausencia con el horario basal.');
+  return { mensaje_telegram: lines.join('\n'), resumen_ejecutivo: 'Pregunta circadiana semanal contestada con límites de sesiones Fit o declarada sin marcas verificables.', evidencia: { source: sourceLabel, fetchedAt: result.fetchedAt || null, window: { startMs: startMs, endMs: endMs }, sessions: fields } };
 }
 
 function _buildHistoricalAnalyticsAnswer_(payload) {
@@ -336,7 +368,18 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
     payload.user_text = _orchestratorExtractUserText_(rawPayload);
     payload.history_request = _orchestratorHistoryRequest_(payload.user_text);
     if (!payload.history_request) payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal);
-    if (payload.history_request && typeof Sensor_GoogleFit_fetchDailyHistory_ === 'function') {
+    if (payload.history_request && payload.history_request.type === 'sleep_schedule' && typeof Sensor_GoogleFit_fetchSleepHistory_ === 'function') {
+      payload.historical_sleep = _safeETL('GoogleFit_Sleep_History', function () {
+        return Sensor_GoogleFit_fetchSleepHistory_(payload.history_request.startMs, payload.history_request.endMs);
+      }, { available: false, reason: 'SLEEP_HISTORY_READER_UNAVAILABLE', sessions: [], segments: [] });
+      if (payload.historical_sleep.available && payload.historical_sleep.sessions.length && typeof Memory_storeSleepSessions === 'function') {
+        Memory_storeSleepSessions(payload.historical_sleep);
+      }
+      if ((!payload.historical_sleep.available || !payload.historical_sleep.sessions.length) && typeof Memory_listSleepSessions === 'function') {
+        var remembered = Memory_listSleepSessions({ startMs: payload.history_request.startMs - Sensor_HOURS_24_MS, endMs: payload.history_request.endMs + Sensor_HOURS_24_MS });
+        if (remembered.length) payload.historical_sleep = { available: false, source: 'bioos_l2', fetchedAt: null, sessions: remembered, reason: payload.historical_sleep.reason || 'GOOGLE_FIT_HISTORY_EMPTY' };
+      }
+    } else if (payload.history_request && typeof Sensor_GoogleFit_fetchDailyHistory_ === 'function') {
       payload.historical_biometrics = _safeETL('GoogleFit_History', function () {
         return Sensor_GoogleFit_fetchDailyHistory_(payload.history_request.startMs, payload.history_request.endMs);
       }, { available: false, reason: 'HISTORY_READER_UNAVAILABLE', days: [] });
