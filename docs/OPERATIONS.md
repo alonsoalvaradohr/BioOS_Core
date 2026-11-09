@@ -1,49 +1,68 @@
-# Operacion y release
+# Operación y releases
 
-## Propiedades de runtime
+Separa validación de código, configuración, publicación GAS y observación del runtime. Despliega solo con autorización A3 del propietario cuando aplique.
 
-Configurar secretos en Apps Script Script Properties, nunca en archivos versionados. La compatibilidad actual con Mi Fitness aun requiere un puente Android autorizado que escriba snapshots firmados en el endpoint que se implemente; no almacenar un access token OAuth en NVRAM.
-
-- `GEMINI_API_KEY`
-- `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
-- `TELEGRAM_SECRET_TOKEN`
-- `BIOOS_WEB_APP_URL`: URL HTTPS del proxy autenticado
-- `BIOOS_SENSOR_PROVIDER`: `health_connect`, `mobvoi` o `google_fit_legacy`. Si Health Connect no tiene bridge, el motor intenta Google Fit REST existente como compatibilidad.
-- `BIOOS_DB_ID`
-- `BIOOS_OPS_APPROVAL_TOKEN`: minimo 24 caracteres para migraciones protegidas
-- `VFS_FOLDER_ID`, `VFS_ROM_ID`, `VFS_NVRAM_ID`
-- `MOBVOI_API_ENDPOINT`, `MOBVOI_API_TOKEN` (solo si Mobvoi sigue siendo fuente activa)
-
-La memoria semantica L3 vive en la NVRAM de Drive; los vectores locales usan `bioos-es-hashvec-v1` (96 dimensiones), cap de 300 átomos y caducidad por tipo. Telegram: `/recordar texto`, `/memoria`, `/olvidar ID` y `/resultado descripción` (este último solo ante confirmación explícita). Los vectores son hashes de atributos y alias, no embeddings de un LLM.
-
-## Validacion local
+## Checks antes de PR
 
 ```powershell
+npm run harness -- context
+npm run harness -- policy
 npm run check
+npm test
+npm run ticket -- check BIOOS-YYYYMMDD-NN
+git diff --check
 ```
 
-La validacion no demuestra que sensores, VFS, proxy o Telegram funcionen en runtime. Revisar `/doctor` tras un despliegue autorizado; no hay smoke test remoto que escriba en memoria o envíe mensajes de prueba.
+`.github/workflows/bioos-deploy.yml` corre `npm run check` y `npm run harness -- policy` en push/PR a `main` y `develop`. Para tags `v*`, `deploy` espera `verify`, usa environment `production` y secrets de clasp/deployments. Revisa GitHub para afirmar CI PASS.
 
-## Release a GAS
+## Validar runtime sin mutarlo
 
-El deploy automatizado actualiza únicamente los deployments explícitamente listados; admite uno o una lista CSV para cerrar deployments duplicados. Antes de publicar un tag, confirmar que `BIOOS_CONFIG.VERSION` coincide exactamente con el tag (`v<version>`) y que `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS` apunta al deployment realmente usado por Telegram/proxy.
+1. `/ping`: endpoint y versión reportada.
+2. `/doctor`: proveedor, consulta, ventanas, campos y status HTTP por endpoint.
+3. Consulta funcional: comprueba que el router leyó la pregunta y usó el store pertinente.
+4. `/syncfit status`: progreso y cobertura del archivo.
 
-Configurar en GitHub Actions:
+`ONLINE` no prueba sensores; `HTTP 200` no garantiza puntos; scope autorizado no prueba sincronización; tener archivo en Drive no prueba que el lector lo consultó.
 
-- `GAS_CLASPRC_JSON`: contenido de la credencial clasp con permisos de Apps Script API, guardado como secret.
-- `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS`: ID del deployment estable que se permite actualizar.
-- `BIOOS_GAS_EXECUTION_DEPLOYMENT_ID`: ID del deployment `EXECUTION_API` owner existente; se actualiza junto con los web deployments.
-- Environment `production` para el job de release.
+## Configuración
 
-El job se activa con tags `v*`, verifica el tag contra la version del codigo y solo actualiza los IDs listados. Reutiliza y actualiza el deployment de ejecución API owner existente, evitando consumir otro de los 20 slots versionados. El manifiesto mantiene el acceso `MYSELF`. Para invocarlo con `scripts.run`, configura el proyecto Apps Script para usar el mismo proyecto estándar de Google Cloud que el cliente OAuth, habilita Apps Script API y autoriza todos los scopes del script. Un 403 `caller does not have permission` indica que ambos proyectos Cloud no coinciden. El script de despliegue no escribe el token OAuth renovado sobre `~/.clasprc.json`.
+Las propiedades viven en Script Properties. Ninguna credencial entra al repo. Consulta [configuración y seguridad](CONFIGURATION.md) y los nombres vigentes en `apps-script/00_Sys_Config.js`. Cambiar scopes OAuth requiere ticket, mínimo alcance, consentimiento, reversión y validación; repetir `/reauth` no corrige un 403 cuando el scope está autorizado.
 
-No publicar una version mientras el preflight tenga FAIL/WARN relevante o el destino estable no este identificado. El despliegue modifica el codigo GAS y la version de un deployment; no autoriza ni instala por si mismo permisos de Health Connect, no crea la app Android y no configura el proxy.
+## Release de Apps Script
 
-## Recuperacion
+`scripts/deploy-gas.mjs` actualiza solo deployment IDs explícitos. GitHub Actions requiere `GAS_CLASPRC_JSON`, `BIOOS_GAS_DEPLOYMENT_ID` o `BIOOS_GAS_DEPLOYMENT_IDS`, opcional `BIOOS_GAS_EXECUTION_DEPLOYMENT_ID` y environment `production`.
 
-1. No sobrescribir la NVRAM manualmente.
-2. Identificar el slot de recuperacion verificado.
-3. Restaurar mediante `repairNVRAMFromRecoverySlot`.
-4. Reasignar el deployment estable a una version GAS anterior.
-5. Verificar de nuevo estado de VFS, proveedor biometrico, proxy y mensajeria.
+Antes de crear tag, verifica que `BIOOS_CONFIG.VERSION` corresponde a `v<version>`, revisa destinos estables, checks y revisión. El workflow despliega GAS al crear tag `v*`; merge de PR no despliega. Tampoco crea el bridge Android, autoriza Health Connect ni configura el proxy.
+
+Para Apps Script Execution API, el proyecto GAS y el cliente OAuth deben compartir el proyecto estándar de Cloud y tener Apps Script API habilitada. Un `403 caller does not have permission` puede deberse a esa vinculación aunque el web endpoint funcione. No crees nuevos owner API deployments como workaround.
+
+## Archivo histórico Google Fit
+
+El archivador lee y guarda en Drive BioOS del propietario, sin escribir en Google Fit.
+
+1. `/syncfit` inicia o reanuda.
+2. `/syncfit status` muestra estado, fuentes terminadas, shards/puntos/páginas, fuente actual, último avance, worker y gaps.
+3. Fuentes terminadas aumenta al completar el stream; una fuente grande puede tener shards/puntos mientras sigue `0/N`.
+4. `/syncfit pausa` pausa conservando cursor/shards confirmados; `/syncfit` reanuda.
+5. Solo status `COMPLETE` con gaps/errores revisados permite hablar de archivo completo; no implica que cada métrica de Mi Fitness esté disponible.
+6. Prueba consulta por ventana y verifica unidad, procedencia y cobertura.
+
+No borres shards/catálogo ni los incluyas en Git. Una reversión de código no elimina archivos de Drive.
+
+## Recuperación
+
+### NVRAM
+
+No edites JSON de producción a mano. Identifica slot/generación, valida checksum y esquema, usa `repairNVRAMFromRecoverySlot` bajo autorización y registra estado antes/después.
+
+### Release GAS
+
+Reasigna el deployment estable a una versión previa, luego verifica `/ping`, `/doctor`, memoria y mensajería. Revertir código Git no revierte publicación GAS.
+
+### Archivo
+
+El archivador es read-only respecto al proveedor. No purgues archivos privados salvo procedimiento explícito de retención/borrado.
+
+## Medición operativa
+
+BioOS no declara todavía un SLO cuantificado. Para definirlo, medir por versión la tasa de ingestión/duplicados, latencia, jobs atascados, frescura/cobertura por stream, éxito de retrieval, abstenciones correctas, errores de envío y triggers. No presentar un SLO sin series observadas.

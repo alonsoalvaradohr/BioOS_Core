@@ -1,46 +1,65 @@
-﻿# BioOS Core v8.7.0
+# BioOS Core
 
-Sistema experimental sobre Google Apps Script y Node.js para ingesta, memoria estructurada, automatización y reportes. El estado del código, Apps Script, Health Connect y Telegram se reportan por separado; una versión en Git no demuestra que esté desplegada.
+![BioOS Core](docs/assets/bioos-mark.svg)
 
-## Arquitectura actual del código
+**BioOS Core es un orquestador personal de salud y trabajo sobre Google Apps Script.** Recibe mensajes y telemetría autorizada, conserva observaciones con procedencia y responde solo hasta donde llegan los datos disponibles. Es un proyecto privado, experimental y no un dispositivo médico.
 
-```text
-Telegram → proxy autenticado → Apps Script doPost → Queue_NLP (Sheets)
-        → worker / compilador → política de decisión → orquestador
-        → memoria VFS (Drive, L0-L4) → respuesta Telegram
+> **Estado del código:** `8.15.1` · **rama de trabajo:** `develop` · **runtime:** debe verificarse por separado. Un commit o un PR no publica ni prueba Apps Script.
 
-Mi Fitness → Health Connect → puente Android (pendiente) → proveedor BioOS
+## Qué hace
+
+- Recibe texto y fotos desde Telegram a través de un proxy autenticado y una cola asíncrona.
+- Consulta el proveedor biométrico disponible; actualmente conserva Google Fit REST como ruta existente/transitoria. Un puente Xiaomi/Mi Fitness → Health Connect no forma parte de este repositorio.
+- Mantiene memoria estructurada y semántica privada en Drive, separando datos observados, reportados, derivados y desconocidos.
+- Puede archivar el histórico Google Fit de solo lectura en shards gzip privados de Drive mediante `/syncfit`, reanudando la lectura por fuente y página.
+- Enruta consultas a lectores/especialistas y sintetiza respuestas con evidencia; cuando falta cobertura, debe decir qué falta.
+
+## Vista del sistema
+
+```mermaid
+flowchart LR
+  U[Alonso / Telegram] --> P[Proxy autenticado]
+  P --> W[Apps Script webhook y cola]
+  W --> R[Router y lectores especializados]
+  R --> S[Google Fit REST transitorio]
+  R --> M[Memoria estructurada y semántica en Drive]
+  S --> A[Archivo histórico privado en Drive]
+  M --> R
+  A --> R
+  R --> G[Auditoría de evidencia]
+  G --> P
 ```
 
-El proxy valida el secreto de Telegram antes de entregar el evento a Apps Script. La cola conserva entradas para procesamiento asíncrono y reintentos. La salida se sanitiza antes del envío.
+## Primeros pasos
 
-## Memoria
-
-- `BioOS_ROM.json`: configuración de agentes e invariantes.
-- `BioOS_NVRAM.json`: estado durable en capas L0 cursores, L1 trabajo, L2 episodios/data lake, L3 semántica/calibración y L4 perfil basal.
-- Dos slots de recuperación conservan snapshots verificables. La restauración requiere una acción explícita.
-- La guía operativa y el resumen del second brain están en [docs/agent-harness/README.md](docs/agent-harness/README.md) y [docs/agent-harness/STATE.md](docs/agent-harness/STATE.md).
-
-## Evidencia y automatización
-
-Los briefings AM/PM son deterministas: informan campos observados y marcan los ausentes. El briefing matutino reutiliza una intención de entrenamiento que el usuario haya reportado recientemente en L1, siempre marcada como reportada y no verificada. No genera ritmo, macros, suplementos, horario de sueño ni estado de agenda sin fuente suficiente. La frecuencia cardíaca durante ejercicio no se usa como RHR.
-
-El código de reconciliación conserva briefings de mañana y noche y desprograma auditoría semanal/ACWR y ajuste mensual hasta contar con sesiones y resultados confirmados por Alonso. El estado de los triggers que ya existen en producción aún requiere reconciliación del runtime. Los límites de evidencia y autonomía están en [AGENTS.md](AGENTS.md).
-
-## Sensores y límites vigentes
-
-BioOS no contiene el puente Android que lea Health Connect del Xiaomi Watch 2/Mi Fitness. Sin ese componente y su autorización, el runtime debe informar que la fuente no está conectada. RHR debe permanecer ausente si no existe una medición de reposo con fuente y fecha válidas.
-
-## Operación
+Requiere Node.js 20 o superior. Para instalar dependencias de desarrollo si el proyecto las incorpora, usa `npm install`; este runtime no usa dependencias npm para Apps Script.
 
 ```powershell
 npm run harness -- context
 npm run harness -- policy
-npm run ticket -- new BIOOS-YYYYMMDD-01 --title "Meta observable"
-npm run ticket -- check BIOOS-YYYYMMDD-01
 npm run check
+npm test
 ```
 
-Consulta [docs/ROADMAP.md](docs/ROADMAP.md) para bloqueadores y [docs/OPERATIONS.md](docs/OPERATIONS.md) para despliegue. GitHub Actions valida cambios; los tags `vX.Y.Z` publican los deployments indicados explícitamente en el secret de release. Ningún workflow instala Health Connect ni sustituye una revisión de `/doctor`.
+Los checks locales no leen cuentas personales, no prueban sincronización wearable y no confirman el deployment de Telegram. Revisa [inicio y mapa de documentación](docs/README.md), [arquitectura](docs/ARCHITECTURE.md), [referencia de comandos](docs/TELEGRAM_COMMANDS.md) y [operación/release](docs/OPERATIONS.md).
 
-El reporte operativo completo se prepara para enviarse por Telegram mediante la ejecución API de Apps Script, restringida al propietario (`MYSELF`). La ejecución requiere que el proyecto Apps Script y el cliente OAuth compartan el mismo proyecto estándar de Google Cloud, con Apps Script API habilitada. Mientras esa vinculación no se confirme, el informe no se considera enviado. No debe añadirse un endpoint GET público para enviar mensajes o invocar tareas internas.
+## Estado real y límites
+
+| Área | Estado del repositorio | Qué evidencia lo confirma |
+|---|---|---|
+| Aplicación | Apps Script V8, versión fuente 8.15.1 | `package.json`, `apps-script/00_Sys_Config.js` |
+| Proveedor | Google Fit REST de compatibilidad; campos sujetos a permisos y sincronización | `/doctor` en el runtime, con fecha, ventana, HTTP y campos |
+| Xiaomi Watch 2 / Mi Fitness | No hay bridge Android Health Connect en este repositorio | Código bajo `apps-script/sensors/` y [roadmap](docs/ROADMAP.md) |
+| Memoria | L1/L2/L3/L4 con almacenamiento privado; vectores locales de hashing 96D, no embeddings neuronales | [disposición de datos](docs/DATA_LAYOUT.md) |
+| Archivo Google Fit | Código reanudable presente; cobertura real depende del `/syncfit status` del propietario | Ticket [BIOOS-20261109-12](docs/tickets/active/BIOOS-20261109-12.md) y estado reportado en [harness](docs/agent-harness/STATE.md) |
+| Producción | No inferir desde Git; la última evidencia de runtime debe venir de `/ping`, `/doctor` y despliegues GAS | [operaciones](docs/OPERATIONS.md) |
+
+**Privacidad:** no subir tokens, identificadores privados, imágenes de salud, exportaciones biométricas ni archivos de Drive. Los datos originales de `/syncfit` se mantienen fuera de Git. Consulta [seguridad y configuración](docs/CONFIGURATION.md).
+
+## Contribuir
+
+El repositorio es privado y el flujo sigue tickets acotados, evidencia con procedencia, checks y revisión por PR. Lee [CONTRIBUTING.md](CONTRIBUTING.md) antes de cambiar código, permisos o despliegues. Los cambios de `develop` se proponen a `main` mediante pull request; no se publica producción por hacer merge.
+
+## Licencia y uso
+
+Este repositorio está marcado `private` en `package.json`. No se concede permiso de redistribución o uso clínico por la documentación. Contacta al propietario para cualquier uso fuera del espacio privado.

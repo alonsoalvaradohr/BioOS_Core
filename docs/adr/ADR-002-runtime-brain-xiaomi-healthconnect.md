@@ -1,10 +1,10 @@
 # ADR-002: runtime brain, Xiaomi telemetry, and semantic retrieval
 
-- Status: `IMPLEMENTED_LOCALLY_PENDING_RELEASE`
+- Status: `PARTIALLY_IMPLEMENTED; GOOGLE_FIT_ARCHIVE_IN_PROGRESS`
 - Date: `2026-11-09`
 - Scope: the BioOS runtime brain (orchestrator, physiology, sleep, and nutrition agents), separate from the repository-development harness.
 
-## Current observed state
+## Context at decision time (historical snapshot, 2026-11-09)
 
 - Production is on BioOS 8.7.1. The source provider `health_connect` returns `HEALTH_CONNECT_ANDROID_BRIDGE_NOT_INSTALLED`; Apps Script cannot read Health Connect on Alonso's phone by itself.
 - The repository has a Google Fit REST reader and OAuth scopes, but the sensor engine defaulted to `health_connect`, whose implementation was only an unavailable stub. This cut off the old Google Fit ingestion path unless the script property explicitly selected `google_fit_legacy`.
@@ -12,6 +12,8 @@
 - The pure outcome ledger now has an NVRAM persistence adapter; only explicit user-confirmed results become completed outcomes.
 - There is no pretrained transformer embedding provider, remote vector index, or Android application in this repository. The Cloudflare Worker that fronts Telegram is also not source-controlled here.
 - `scripts.run` currently fails because its OAuth client and Apps Script project do not share the same standard Google Cloud project. This affects owner-run Apps Script API operations; it is separate from Health Connect permissions.
+
+The snapshot above describes the state when this ADR was written, not a continuously verified production state. Source code since then added Google Fit fallback/session readers and a resumable raw archive. Later Telegram status pasted by Alonso reports that archive running at 16/54 sources, 96 shards, 89,192 points and 95 pages. That report is user-provided, not an independent Drive inspection; see [`STATE.md`](../agent-harness/STATE.md) and the active archive ticket.
 
 ## 1. Xiaomi Watch 2 -> BioOS data path
 
@@ -82,7 +84,7 @@ A future BGE-M3 + Vectorize path remains optional only after confirming Worker s
 3. **Memory release acceptance**: save a note with `/recordar`, locate it in `/memoria` and a relevant briefing, then delete it with `/olvidar ID`.
 4. **Outcome acceptance**: confirm `/resultado` writes a ledger record and no suggested workout is counted as completed.
 
-The Health Connect client/Worker still do not exist and no production enrollment was performed. Memory and Fit failover code are local changes until a release is deployed.
+The Health Connect client/bridge still does not exist in this repository. The archive code exists, but completion and query coverage must be established by owner runtime status and metric-level tests. Memory and Fit fallback code in a branch do not prove deployment or retrieval quality.
 
 ## Primary references
 

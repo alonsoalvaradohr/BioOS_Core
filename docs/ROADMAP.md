@@ -1,64 +1,61 @@
-# Roadmap BioOS - estado al 2026-11-09
+# Roadmap BioOS Core
 
-## Historial raw Google Fit y consulta de métricas
+Estado del código fuente: 8.15.1 (`develop`, inspección local 2026-11-09). La prioridad es cerrar discrepancias entre repositorio, release, cobertura real de proveedor y consulta del segundo cerebro. Estado personal de cuenta/runtime aparece como `reported` cuando procede del usuario.
 
-- Ticket BIOOS-20261109-12 implementa archivo paginado de fuentes/datasets Google Fit en gzip shards dentro del Drive privado de BioOS, catálogo temporal, checksum y cursor reanudable. `/syncfit`, `/syncfit status` y `/syncfit pausa` permiten operarlo desde Telegram.
-- Las consultas de cadencia pasan por estadísticas de los puntos originales del tipo `com.google.step_count.cadence`; la memoria visual reportada sigue identificada como `reported` y no se mezcla con medidas del proveedor.
-- El despliegue de código no significa que ya se haya copiado la cuenta: Alonso debe iniciar el backfill con `/syncfit` y revisar `/syncfit status`. Hasta que termine, la respuesta declara índice/cobertura incompletos. Huecos 403 se conservan por tipo y periodo.
-- Google Fit REST se usa como canal existente y transitorio: Google anuncia deprecación en 2026. Evaluar continuidad por Health Connect Android; no asumir que un cambio a Google Health API recoge los datos originados por Mi Fitness.
+## Estado resumido
 
-Codigo local, runtime GAS y flujos externos son estados distintos. Una correccion local no significa que Telegram ya use el cambio.
+| Frente | Estado | Hecho verificable | Próximo hito |
+|---|---|---|---|
+| Harness de desarrollo | Implementado local/en `develop` | Contexto, política y tickets ejecutables; reglas en `AGENTS.md` | Mantener tickets y estado compacto sincronizados |
+| Ingesta Telegram | Implementada en código | Proxy autenticado, webhook, cola y workers | Monitorizar entrega/atascos y reconciliar triggers del runtime |
+| Google Fit REST | Implementado como ruta legacy/transitoria | Lector, diagnósticos HTTP y lector de sesiones/métricas | Medir por stream qué aporta Mi Fitness y migrar antes de retirada de Fit |
+| Xiaomi → Health Connect | No implementado | No existe app/bridge Android aquí | Diseñar solo si Fit deja de ser vía suficiente |
+| Memoria runtime | Parcialmente implementada | L2 estructurada, L3 reportada/vector local, L4 referencia; retención/límites | Asegurar consulta correcta en preguntas abiertas y pruebas end-to-end con runtime |
+| Archivo histórico | Código implementado; ejecución en progreso según reporte usuario | Status de Telegram reportado: 16/54 fuentes, 95 páginas, 96 shards, 89.192 puntos, `RUNNING` | Dejar completar; revisar gaps y probar consultas sobre el archivo |
+| Release a `main` | Pendiente de PR/revisión | `develop` está 33 commits delante de `main`, 0 detrás al inicio de esta tarea | Abrir PR; revisar CI/diff; el merge queda al propietario |
+| Documentación pública/privada | Actualizada en este cambio | Portal, referencias, runbooks, Mermaid, seguridad y onboarding | Mantener al cambiar contratos o despliegues |
 
-## Hallazgos confirmados en el repositorio
+## Fases siguientes
 
-- Ticket BIOOS-20261109-08 closes a routing/memory gap: circadian questions previously bypassed history retrieval unless phrased as an average. v8.11.0 adds sleep session/stage retrieval and structured L2 boundaries. Runtime Fit coverage still must be confirmed from returned HTTP/point counts.
-- Ticket BIOOS-20261109-09 adds historical running-session routing, exact session distance queries, structured L2 activity memory and sanitized provider diagnostics. Telegram evidence is still required to determine whether this user's Fit integration exposes Mi Fitness run sessions and distance.
-- Ticket BIOOS-20261109-10 checks the minimal distance-read authorization, preserves screenshot metrics in L2 with `reported` provenance, and separates one-run classification from multi-run comparisons. Telegram consent and visual-memory persistence still require Alonso's runtime validation.
-- Ticket BIOOS-20261109-11 decouples cadence/stride memory from complete run cards, restores a recent running question for a separately dispatched photo, and replaces generic SRE vision failures with explicit recovery guidance.
-- Follow-up evidence for ticket 11: a cadence-history question still returned a canned “not registered” report. Root cause in v8.14.0: no dedicated history route existed, and same-turn history was read before a just-extracted image metric was persisted. v8.14.1 adds explicit L2 lookup and same-turn refresh.
+### 1. Completar y auditar la copia histórica
 
-- BioOS 8.7.1 estaba desplegado; `BIOOS_SENSOR_PROVIDER` ausente cae a `health_connect`, que solo devolvia `HEALTH_CONNECT_ANDROID_BRIDGE_NOT_INSTALLED`.
-- El proyecto conserva lector OAuth REST de Google Fit y scopes. Alonso confirma que antes usaba Mobvoi/Health -> Google Fit y que Mi Fitness esta vinculado a Google Fit. Eso identifica la ruta que se debe restaurar antes de introducir otro bridge.
-- L1 guarda maximo 10 eventos. Antes no habia memoria semantica L3 utilizable ni persistence adapter del outcome ledger.
-- El Google Fit REST existente agrega pasos, distancia, calorias y segmentos de sueño; quita RHR inventado a partir de heart-rate general.
+- Mantener datos raw en Drive privado, jamás en Git o embeddings externos.
+- Esperar `COMPLETE`, revisar streams con denegación o cobertura parcial y conservar el resumen de auditoría.
+- Probar consultas arbitrarias (cadencia, sesiones, sueño) contra archivo con origen, unidades, fechas y cobertura.
+- Confirmar que el lector RAG/consulta raw realmente usa catálogo y shards; la existencia del archivo por sí sola no resuelve la amnesia.
 
-## Cambios locales de este ticket (aun requieren release)
+### 2. Enlazar recuperación y respuesta
 
-1. Si `health_connect` esta seleccionado sin bridge, el motor consulta Google Fit existente como failover. Si Mobvoi falla, hace el mismo fallback. `/doctor` permite comprobar en vivo resultado, timestamp, fuente y campos.
-2. L3 persiste recuerdos versionados con fuente, estado, evidencia y caducidad. NLP de BioOS promueve a recuerdos reportados planes, sintomas, carga y nutricion; las sesiones no se marcan completadas por inferencia.
-3. Cada recuerdo tiene un vector local privado de 96 dimensiones (feature hashing + aliases españoles); retrieval puntúa coseno y entrega top-k al orquestador. No hay llamada a embeddings externos. No es un modelo transformer, así que sus límites de semántica dependen del solapamiento de términos y del mapa de sinónimos.
-4. L3 guarda el outcome ledger mediante NVRAM. `/resultado` escribe un resultado solo con confirmacion explicita; `/recordar`, `/memoria` y `/olvidar ID` permiten controlar recuerdos.
-5. L3 limita 300 recuerdos; NVRAM limita 4 MB. El registro de telemetria continua estructurado y separado de las memorias vectoriales.
+- Mantener el texto del usuario completo desde entrada hasta síntesis.
+- Seleccionar store por intención de forma comprobable; no hardcodear una pregunta puntual como única solución.
+- Instrumentar `query → route → stores → records/evidence → answer`, sin registrar salud sensible en logs.
+- Hacer pruebas de aceptación con preguntas diversas y casos: dato presente, store vacío, permisos, sync incompleto, ambigüedad.
+- Medir citas de evidencia correctas, recall relevante, abstención correcta, falsos ceros y respuestas fuera de ruta.
 
-## Xiaomi Watch 2 y continuidad de datos
+### 3. Sostener fuente biométrica
 
-Alonso reporta que Mi Fitness esta vinculada a Google Fit. El motor vuelve a probar esa ruta con OAuth en el deployment; todavía no se ha consultado `/doctor` después de este cambio, así que no afirmo que sus permisos y endpoint estén respondiendo.
+- El propietario indica Mi Fitness vinculado con Google Fit; verificar cada stream/ventana en runtime.
+- Consultar campos existentes sin agregar scopes innecesarios. Distinguir punto no recibido, permiso denegado, fuente vacía y atraso de sincronización.
+- Investigar Health Connect y origen Mi Fitness en dispositivo antes de construir puente; mantener modelo portable de proveedor y provenance.
+- Google Fit REST es transición temporal: plan de migración documentado antes de deprecación efectiva.
 
-El Xiaomi Watch 2 usa Wear OS, se vincula con Mi Fitness y sus especificaciones incluyen PPG óptico, acelerómetro, giroscopio, monitor de sueño y GNSS dual L1/L5. Xiaomi documenta sueño por fases, pulso durante sueño y resumen detallado de ejercicio en Mi Fitness. La disponibilidad de cada campo en Google Fit depende de la sincronización concreta. No derivar RHR de frecuencia cardíaca durante el ejercicio.
+### 4. Ciclos y prescripciones
 
-Google recomienda Health Connect para nuevas integraciones Android y avisa que Fit APIs se deprecian durante 2026. Por eso la ruta se resuelve en dos pasos: (a) recuperar el canal Google Fit ya enlazado y medir qué campos entrega; (b) migrar a Health Connect antes de que Fit deje de funcionar, preservando auth/procedencia e historial. No construir otro bridge mientras el existente funcione.
+- AM resume vigilia del día anterior y PM resume vigilia del día actual, cada uno con su ventana explícita.
+- No publicar promedio semanal, ACWR o tendencia hasta tener cobertura suficiente, al menos cuatro semanas para tendencias como exige el diseño anterior, y sesiones/resultados contrastables.
+- Nunca generar RHR desde HR de ejercicio; ni entrenamiento/ritmo/macros/suplementos/sueño como certeza sin fuente.
+- Mantener sistema como apoyo personal no clínico y evitar vetos/órdenes médicas deterministas sin justificación y revisión.
 
-### Siguientes pasos verificables
+## Criterios de salida de la fase actual
 
-1. Publicar release y consultar `/doctor`; guardar en evidencia solo fuente, antigüedad, estado y campos recibidos, sin tokens.
-2. Si falla, distinguir OAuth 401/403 de endpoint 4xx/5xx y de sincronización Mi Fitness vacía. Revisar Google Cloud/API/scopes y consentimiento existente sin desenlazar el reloj.
-3. Comparar un día de datos de Mi Fitness con Google Fit para pasos, distancia, calorías, sueño, pulso de ejercicio y sesión. Anotar campos que realmente llegan.
-4. Planear puente Health Connect de solo lectura si Google Fit ya no sirve. En el teléfono descubrir origen Mi Fitness, deduplicar registros, conservar timestamps y autenticar subida con clave ECDSA Android Keystore más HMAC servicio-a-servicio.
-5. Habilitar tendencias deportivas solo con varias semanas de entrenamiento observado y resultados confirmados por Alonso.
+- `/syncfit status` llega a `COMPLETE` o informa explícitamente fuentes/gaps que bloquean cobertura total.
+- Una consulta genérica de historial recupera un dato raw pertinente, muestra procedencia/ventana y separa dato de usuario de proveedor.
+- Casos negativos distinguen `not found`, `store unavailable`, `source denied` y `index incomplete`.
+- PR `develop` → `main` revisado con checks de GitHub. No se considera release hasta que propietario hace merge y el despliegue GAS se valida aparte.
 
-## Estado del segundo cerebro
+## No hacer
 
-El diseño y código local están en [`ADR-002`](adr/ADR-002-runtime-brain-xiaomi-healthconnect.md). Las memorias durables quedan en NVRAM/Drive; una matriz `N x 96` se forma en cada búsqueda. Tensores no son necesarios para este volumen. `/memoria` informa estado; el despliegue de 8.7.1 aún no incluye estas funciones.
-
-## Criterios de salida
-
-- [ ] `/doctor` obtiene métricas recientes desde Google Fit y muestra fuente/antigüedad; los campos ausentes siguen `null`.
-- [ ] Mi Fitness -> Google Fit es comparado con la app y su procedencia confirmada.
-- [ ] Briefing AM/PM usa recuerdo relevante sin presentar reportes como telemetría.
-- [ ] `Memory_storeSemantic` persiste y recupera; el usuario puede recordar/listar/borrar.
-- [ ] `/resultado` registra solo outcomes explícitamente confirmados y preserva timestamps/procedencia.
-- [ ] Tendencias semanales usan al menos cuatro semanas observadas y reportan insuficiencia si falta cobertura.
-- [ ] El flujo de autenticación Google Fit migra a Health Connect con permisos mínimos antes de retirarse la API Fit.
-- [ ] Release tag activa un único deployment estable; `/ping` y `/doctor` verificados tras rollout.
-
-Hasta lograrlo, los cambios locales de código no se declaran activos en Telegram ni como automatización plenamente operativa.
+- No declarar Xiaomi/Health Connect enlazado por tener una ruta `health_connect` configurada.
+- No llamar “memoria completa” a un backup raw sin lector ni índice operativo.
+- No declarar cobertura por un `HTTP 200` vacío ni por una vista de app móvil.
+- No subir archivos de salud a issues, Actions artifacts, repositorio o servicios vectoriales externos.
