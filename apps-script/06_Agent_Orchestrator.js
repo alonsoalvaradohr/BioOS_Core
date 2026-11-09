@@ -27,6 +27,11 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
       }
       if (triggerEvent === 'USER_FEEDBACK' && payload.user_nlp && Array.isArray(payload.user_nlp.activity_metrics) && payload.user_nlp.activity_metrics.length && typeof Memory_storeReportedActivityMetrics === 'function') {
         payload.reported_activity_metrics = Memory_storeReportedActivityMetrics(payload.user_nlp.activity_metrics);
+        // A photo and its prior question may be processed as one turn. The L2 query
+        // runs during payload construction, before this write; refresh it after commit.
+        if (payload.history_request && payload.history_request.type === 'activity_metrics' && typeof Memory_listReportedActivityMetrics === 'function') {
+          payload.activity_metrics_history = { available: true, source: 'bioos_l2', records: Memory_listReportedActivityMetrics({ sinceMs: payload.history_request.startMs, limit: 20 }) };
+        }
       }
       if (typeof Memory_storeBiometricObservation === 'function' && payload.biometric_telemetry) {
         const storedObservation = Memory_storeBiometricObservation(payload.biometric_telemetry);
@@ -65,7 +70,7 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     const output = isScheduledBriefing
       ? _buildEvidenceBriefing_(triggerEvent, payload, memory)
       : isHistoricalAnalytics
-        ? (payload.history_request.type === 'sleep_schedule' ? _buildHistoricalSleepScheduleAnswer_(payload) : payload.history_request.type === 'running_comparison' ? _buildRunningComparisonAnswer_(payload) : /^running_/.test(payload.history_request.type) ? _buildRunningAssessmentAnswer_(payload) : _buildHistoricalAnalyticsAnswer_(payload))
+        ? (payload.history_request.type === 'sleep_schedule' ? _buildHistoricalSleepScheduleAnswer_(payload) : payload.history_request.type === 'activity_metrics' ? _buildActivityMetricsHistoryAnswer_(payload) : payload.history_request.type === 'running_comparison' ? _buildRunningComparisonAnswer_(payload) : /^running_/.test(payload.history_request.type) ? _buildRunningAssessmentAnswer_(payload) : _buildHistoricalAnalyticsAnswer_(payload))
       : isReportedActivityMetrics
         ? _buildReportedActivityMetricsAnswer_(payload.reported_activity_metrics, payload.user_text, payload.reported_run_capture)
       : isReportedRunCapture
@@ -319,6 +324,7 @@ function _orchestratorReportWindow_(triggerEvent, nowMs) {
 
 function _orchestratorHistoryRequest_(question) {
   var q = String(question || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/(cadencia|cadence|zancada|stride|\bspm\b)/i.test(q)) return { type: 'activity_metrics', metric: /(zancada|stride)/i.test(q) ? 'stride' : 'cadence', startMs: Date.now() - 180 * Sensor_HOURS_24_MS, endMs: Date.now() };
   var running = /(carrer|running|run\b|rodaje|entrenamiento|sesion|actividad deportiva)/i.test(q);
   var pace = /(avg\s*pace|average\s*pace|ritmo|pace|min\/km|minutos por kilometro)/i.test(q);
   var latestRun = /(ultim|recient|last|actual|reciente)/i.test(q) && running;
@@ -455,6 +461,21 @@ function _buildHistoricalAnalyticsAnswer_(payload) {
   return { mensaje_telegram: lines.join('\n'), resumen_ejecutivo: 'Consulta histórica respondida con serie diaria Google Fit o declarada sin evidencia.', evidencia: result };
 }
 
+function _buildActivityMetricsHistoryAnswer_(payload) {
+  var result = payload && payload.activity_metrics_history || {}, records = Array.isArray(result.records) ? result.records : [];
+  var metric = payload && payload.history_request && payload.history_request.metric || 'cadence';
+  var title = metric === 'stride' ? 'zancada' : 'cadencia';
+  if (!result.available) return { mensaje_telegram: 'No pude consultar la memoria L2 de métricas técnicas; no puedo concluir que la cadencia esté ausente. Estado: lector de memoria no disponible.', resumen_ejecutivo: 'L2 no consultable para actividad técnica.', evidencia: result };
+  if (!records.length) return { mensaje_telegram: '<b>No encontré registros de ' + title + ' en L2.</b> La consulta sí leyó la memoria durable de reportes visuales de actividad (ventana: últimos 180 días) y no hay un dato guardado que pueda citar. Google Fit no aporta cadencia por esta ruta. Envía el panel de cadencia como foto o texto para conservarlo como métrica reportada.', resumen_ejecutivo: 'L2 consultada; sin reportes visuales de métricas técnicas en la ventana solicitada.', evidencia: { source: result.source, recordsFound: 0, windowDays: 180 } };
+  var lines = ['<b>Registros de ' + title + ' recuperados de L2</b>'];
+  records.slice(0, 5).forEach(function(record, index) {
+    var m = record.metrics || {}, value = metric === 'stride' ? m.strideAvgCm : m.cadenceAvgSpm, max = metric === 'stride' ? m.strideMaxCm : m.cadenceMaxSpm;
+    lines.push((index + 1) + '. ' + (value || 'sin promedio') + (metric === 'stride' ? ' cm' : ' SPM') + (max ? ' (máximo ' + max + ')' : '') + ' · ' + _orchestratorEscapeHtml_(record.sourceApp || 'aplicación no identificada') + ' · ' + _orchestratorEscapeHtml_(record.activityDateLocal || record.recordedAt || 'fecha no disponible') + ' · estado ' + _orchestratorEscapeHtml_(record.status || 'reported') + '.');
+  });
+  lines.push('Estos reportes provienen de capturas del usuario; no son mediciones consultadas directamente a Google Fit.');
+  return { mensaje_telegram: lines.join('\n'), resumen_ejecutivo: 'Consulta específica de L2 recuperó métricas técnicas con procedencia.', evidencia: { source: result.source, recordIds: records.slice(0, 5).map(function(r) { return r.reportId; }) } };
+}
+
 function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) {
   const payload = {};
   const nvram = (memory && memory.NVRAM) || {};
@@ -484,6 +505,8 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
       }
       if (typeof Memory_listReportedRunningSessions === 'function') payload.historical_activities.reportedSessions = Memory_listReportedRunningSessions({ startMs: payload.history_request.startMs, endMs: payload.history_request.endMs, limit: 20 });
       if (payload.historical_activities.sessions.length && typeof Memory_storeRunningSessions === 'function') Memory_storeRunningSessions(payload.historical_activities);
+    } else if (payload.history_request && payload.history_request.type === 'activity_metrics') {
+      payload.activity_metrics_history = { available: typeof Memory_listReportedActivityMetrics === 'function', source: 'bioos_l2', records: typeof Memory_listReportedActivityMetrics === 'function' ? Memory_listReportedActivityMetrics({ sinceMs: payload.history_request.startMs, limit: 20 }) : [] };
     } else if (payload.history_request && payload.history_request.type === 'sleep_schedule' && typeof Sensor_GoogleFit_fetchSleepHistory_ === 'function') {
       payload.historical_sleep = _safeETL('GoogleFit_Sleep_History', function () {
         return Sensor_GoogleFit_fetchSleepHistory_(payload.history_request.startMs, payload.history_request.endMs);

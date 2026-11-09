@@ -1,5 +1,11 @@
 # Changelog
 
+## 8.14.1 - 2026-11-09
+
+- Cadence/stride history questions now read their own L2 report partition; they no longer fall through to generic biometrics or claim absence without querying the durable store.
+- The same-turn photo flow refreshes its L2 result after storing extracted metrics, so a recovered question sees facts written from that image immediately.
+- Empty L2 and unavailable L2 reader produce distinct factual responses.
+
 ## 8.14.0 - 2026-11-09
 
 - Technical cadence/stride panels are extracted and persisted independently of full session cards, with Telegram photo event and `reported` provenance.

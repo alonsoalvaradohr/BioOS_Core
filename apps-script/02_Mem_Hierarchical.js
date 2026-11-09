@@ -473,6 +473,16 @@ function Memory_storeReportedActivityMetrics(items) {
   return { stored: saved.length, metrics: saved, source: 'telegram_visual_user_report' };
 }
 
+/** Read provenance-preserving technical metrics written from Telegram workout images. */
+function Memory_listReportedActivityMetrics(options) {
+  var opts = options || {}, sinceMs = Number(opts.sinceMs) || 0, limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function(item) {
+    var r = item && item.data_type === 'reported_activity_metrics' && item.payload;
+    return r && (!sinceMs || Date.parse(r.recordedAt || item.timestamp || '') >= sinceMs);
+  }).map(function(item) { return item.payload; }).sort(function(a, b) { return Date.parse(b.recordedAt || 0) - Date.parse(a.recordedAt || 0); }).slice(0, limit);
+}
+
 /** Obsidian-like view assembled from semantic atoms and their evidence IDs. */
 function Memory_buildEvidenceGraph_(atoms, observations) {
   atoms = Array.isArray(atoms) ? atoms : []; observations = Array.isArray(observations) ? observations : [];
