@@ -1,10 +1,12 @@
 /** Google Fit REST contingency. Requires OAuth scopes plus Fitness API enabled in the Cloud project. */
 function Sensor_GoogleFit_fetchFallback(options) {
-  var sinceMs = options && typeof options.sinceMs === 'number' ? options.sinceMs : Date.now() - Sensor_HOURS_24_MS;
+  var now = Date.now();
+  var sinceMs = options && typeof options.sinceMs === 'number' ? options.sinceMs : Sensor_localDayStartMs_(now);
   try {
-    var props = PropertiesService.getScriptProperties(), now = Date.now(), last = Number(props.getProperty('SENSOR_GOOGLE_FIT_LAST_ATTEMPT_MS') || 0);
-    if (last && now - last < Sensor_GOOGLE_FIT_FALLBACK_MS) {
-      var cached = Sensor_GoogleFit_readCachedSnapshot_();
+    var props = PropertiesService.getScriptProperties(), last = Number(props.getProperty('SENSOR_GOOGLE_FIT_LAST_ATTEMPT_MS') || 0);
+    var lastRange = Number(props.getProperty('SENSOR_GOOGLE_FIT_LAST_RANGE_START_MS') || 0);
+    if (last && lastRange === sinceMs && now - last < Sensor_GOOGLE_FIT_FALLBACK_MS) {
+      var cached = Sensor_GoogleFit_readCachedSnapshot_(sinceMs);
       if (cached) {
         cached.metadata = cached.metadata || {};
         cached.metadata.cacheHit = true;
@@ -14,24 +16,26 @@ function Sensor_GoogleFit_fetchFallback(options) {
       return Sensor_unavailableSnapshot('google_fit', 'GOOGLE_FIT_RATE_LIMITED', { retryAfterMs: Sensor_GOOGLE_FIT_FALLBACK_MS - (now - last), lastAttemptMs: last });
     }
     props.setProperty('SENSOR_GOOGLE_FIT_LAST_ATTEMPT_MS', String(now));
-    var snapshot = Sensor_GoogleFit_fetchSnapshot_({ sinceMs: sinceMs, endMs: now });
-    if (snapshot && snapshot.available) Sensor_GoogleFit_cacheSnapshot_(snapshot);
+    props.setProperty('SENSOR_GOOGLE_FIT_LAST_RANGE_START_MS', String(sinceMs));
+    var snapshot = Sensor_GoogleFit_fetchSnapshot_({ sinceMs: sinceMs, endMs: (options && options.endMs) || now });
+    if (snapshot && snapshot.available) Sensor_GoogleFit_cacheSnapshot_(snapshot, sinceMs);
     return snapshot;
   } catch (error) { Sensor_logWarning_('[SENSOR] Google Fit unavailable: ' + Sensor_safeError_(error)); return Sensor_unavailableSnapshot('google_fit', 'GOOGLE_FIT_REQUEST_FAILED', { error: Sensor_safeError_(error) }); }
 }
-function Sensor_GoogleFit_readCachedSnapshot_() {
+function Sensor_GoogleFit_cacheKey_(sinceMs) { return 'BIOOS_GOOGLE_FIT_SNAPSHOT_V2_' + String(sinceMs); }
+function Sensor_GoogleFit_readCachedSnapshot_(sinceMs) {
   try {
     if (typeof CacheService === 'undefined') return null;
-    var raw = CacheService.getScriptCache().get('BIOOS_GOOGLE_FIT_SNAPSHOT_V1');
+    var raw = CacheService.getScriptCache().get(Sensor_GoogleFit_cacheKey_(sinceMs));
     if (!raw) return null;
     var snapshot = JSON.parse(raw);
     return snapshot && snapshot.source === 'google_fit' && snapshot.available && snapshot.data ? snapshot : null;
   } catch (error) { Sensor_logWarning_('[SENSOR] Google Fit cache read failed: ' + Sensor_safeError_(error)); return null; }
 }
-function Sensor_GoogleFit_cacheSnapshot_(snapshot) {
+function Sensor_GoogleFit_cacheSnapshot_(snapshot, sinceMs) {
   try {
     if (typeof CacheService === 'undefined') return;
-    CacheService.getScriptCache().put('BIOOS_GOOGLE_FIT_SNAPSHOT_V1', JSON.stringify(snapshot), 600);
+    CacheService.getScriptCache().put(Sensor_GoogleFit_cacheKey_(sinceMs), JSON.stringify(snapshot), 600);
   } catch (error) { Sensor_logWarning_('[SENSOR] Google Fit cache write failed: ' + Sensor_safeError_(error)); }
 }
 function Sensor_GoogleFit_fetchSnapshot_(range) {
@@ -67,9 +71,9 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({
-        startTimeMillis: String(range.sinceMs),
+        startTimeMillis: String(b.name === 'sleep' ? range.endMs - Sensor_HOURS_24_MS : range.sinceMs),
         endTimeMillis: String(range.endMs),
-        bucketByTime: { durationMillis: String(range.endMs - range.sinceMs) },
+        bucketByTime: { durationMillis: String(range.endMs - (b.name === 'sleep' ? range.endMs - Sensor_HOURS_24_MS : range.sinceMs)) },
         aggregateBy: b.aggregateBy
       }),
       headers: { Authorization: 'Bearer ' + token },
@@ -142,6 +146,9 @@ function Sensor_GoogleFit_fetchSnapshot_(range) {
     telemetryReport: telemetryReport,
     successfulQueries: successfulQueries,
     totalQueries: bucketsDefs.length,
+    dailyWindow: { startMs: range.sinceMs, endMs: range.endMs },
+    sleepWindow: { startMs: range.endMs - Sensor_HOURS_24_MS, endMs: range.endMs },
+    timeZone: (typeof Session !== 'undefined' && Session.getScriptTimeZone) ? Session.getScriptTimeZone() : 'unknown',
     emptyDataWindow: !hasPoints
   });
 }
@@ -175,6 +182,10 @@ function Sensor_GoogleFit_normalizeAggregate_(payload) {
           var calVal = vals[0].fpVal !== undefined ? Number(vals[0].fpVal) : Number(vals[0].intVal || 0);
           if (isFinite(calVal) && calVal > 0) values.caloriesKcal.push(calVal);
         } else if (type === 'sleep') {
+          var sleepStage = Number(vals[0].intVal);
+          // Fit sleep segments include awake and out-of-bed intervals; they
+          // are not sleep duration. Keep only explicit asleep/unknown stages.
+          if ([0, 2, 4, 5, 6].indexOf(sleepStage) === -1) return;
           var duration = Math.max(0, Number(point.endTimeNanos || 0) - Number(point.startTimeNanos || 0)) / 60000000000;
           if (isFinite(duration) && duration > 0) values.sleepMinutes.push(duration);
         }

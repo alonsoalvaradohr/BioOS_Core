@@ -1,5 +1,13 @@
 # Changelog
 
+## 8.9.0 - 2026-11-09
+
+- Sensor activity totals now use the current local calendar day; sleep segments use the preceding 24-hour window and exclude awake/out-of-bed stages.
+- `/doctor` reports exact UTC windows and labels Google Fit calories as total expenditure including resting energy.
+- User questions now reach the final synthesis verbatim, include observation time and agenda availability, and are routed to up to two keyword-matched specialists instead of the first two registry entries.
+- Structured daily sensor snapshots persist in L2 and link to user-reported semantic memories by evidence ID; the orchestrator receives recent measurements plus the generated evidence graph.
+- Partial recovery telemetry no longer authorizes fixed training loads or claims that RHR/sleep are known.
+
 ## 8.8.1 - 2026-11-09
 
 - Fixed sensor normalization so absent `null` values remain missing instead of becoming false zero readings.

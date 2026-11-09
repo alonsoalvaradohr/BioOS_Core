@@ -8,7 +8,8 @@ function getBiometricSnapshot() {
     var props = PropertiesService.getScriptProperties();
     // Preserve the existing cloud path (Mobvoi/Google Fit) when no explicit provider is configured.
     var provider = String(props.getProperty('BIOOS_SENSOR_PROVIDER') || 'google_fit_legacy').trim().toLowerCase();
-    var options = { sinceMs: Date.now() - Sensor_HOURS_24_MS };
+    var now = Date.now();
+    var options = { sinceMs: Sensor_localDayStartMs_(now), endMs: now };
     if (provider === 'mobvoi') {
       var mobvoi = Sensor_Mobvoi_fetchSnapshot(options);
       return mobvoi && mobvoi.available ? mobvoi : Sensor_GoogleFit_fetchWithFallback_(options, provider, mobvoi);
@@ -42,5 +43,5 @@ function Sensor_GoogleFit_fetchWithFallback_(options, configuredProvider, primar
 }
 
 /* Compatibility shims. New consumers must call getBiometricSnapshot(). */
-function _readMobvoiSnapshot_() { return Sensor_Mobvoi_fetchSnapshot({ sinceMs: Date.now() - Sensor_HOURS_24_MS }); }
-function _readGoogleFitSnapshot_() { return Sensor_GoogleFit_fetchFallback({ sinceMs: Date.now() - Sensor_HOURS_24_MS }); }
+function _readMobvoiSnapshot_() { var now = Date.now(); return Sensor_Mobvoi_fetchSnapshot({ sinceMs: Sensor_localDayStartMs_(now), endMs: now }); }
+function _readGoogleFitSnapshot_() { var now = Date.now(); return Sensor_GoogleFit_fetchFallback({ sinceMs: Sensor_localDayStartMs_(now), endMs: now }); }

@@ -25,7 +25,7 @@ const _AGENT_REGISTRY = {
     }, required: ["razonamiento_clinico_oculto", "analisis_arquitectura", "ajuste_circadiano"]
   },
   ejecutivo: {
-    id: "ejecutivo", promptKey: "ejecutivo", events: ["MORNING_BRIEFING", "EVENING_BRIEFING"],
+    id: "ejecutivo", promptKey: "ejecutivo", events: ["MORNING_BRIEFING", "EVENING_BRIEFING", "USER_FEEDBACK"],
     properties: {
       razonamiento_clinico_oculto: { type: "STRING", description: "Deducción de demanda de trabajo cognitivo y límites de foco." },
       diagnostico_carga_mental: { type: "STRING", description: "Evaluación de carga cognitiva basada en señales disponibles." },

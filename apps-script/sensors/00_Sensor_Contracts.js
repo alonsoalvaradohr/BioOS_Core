@@ -7,6 +7,18 @@
 var Sensor_HOURS_24_MS = 24 * 60 * 60 * 1000;
 var Sensor_GOOGLE_FIT_FALLBACK_MS = 5 * 60 * 1000;
 var Sensor_MAX_RESPONSE_CHARS = 1000000;
+function Sensor_localDayStartMs_(nowMs) {
+  var now = typeof nowMs === 'number' ? nowMs : Date.now();
+  try {
+    if (typeof Utilities === 'undefined' || typeof Session === 'undefined') return now - Sensor_HOURS_24_MS;
+    var date = new Date(now), timezone = Session.getScriptTimeZone() || 'America/Costa_Rica';
+    var localDate = Utilities.formatDate(date, timezone, 'yyyy-MM-dd');
+    var offset = Utilities.formatDate(date, timezone, 'Z').match(/^([+-])(\d{2})(\d{2})$/);
+    if (!offset) return now - Sensor_HOURS_24_MS;
+    var offsetMinutes = (offset[1] === '-' ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3]));
+    return Date.parse(localDate + 'T00:00:00Z') - offsetMinutes * 60000;
+  } catch (error) { return now - Sensor_HOURS_24_MS; }
+}
 function Sensor_emptyData_() { return { rhrBpm: null, sleepMinutes: null, steps: null, distanceKm: null, distanceMeters: null, caloriesKcal: null }; }
 function Sensor_missingFor_(data) { return { rhrBpm: data.rhrBpm === null, sleepMinutes: data.sleepMinutes === null, steps: data.steps === null }; }
 function Sensor_snapshot(source, sinceMs, data, reason, metadata) { var normalized = Sensor_normalizeData_(data || {}), missing = Sensor_missingFor_(normalized); return { source: source, available: !reason, fetchedAt: new Date().toISOString(), sinceMs: sinceMs, data: normalized, missing: missing, degraded: !!reason || (missing.rhrBpm && missing.steps), reason: reason || null, metadata: metadata || {} }; }

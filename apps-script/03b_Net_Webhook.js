@@ -447,9 +447,16 @@ function _diagnoseSensorsLive_(sourceChatId) {
     lines.push('Fuente activa: ' + ((snap && snap.source) || 'ninguna'));
     lines.push('Lectura consultada: ' + ((snap && snap.fetchedAt) || 'sin marca de tiempo'));
     lines.push('Estado del proveedor: ' + ((snap && snap.available) ? 'consulta disponible' : ((snap && snap.reason) || 'sin datos')));
+    if (snap && snap.metadata && snap.metadata.dailyWindow) {
+      lines.push('Ventana pasos/energía/distancia (UTC): ' + new Date(snap.metadata.dailyWindow.startMs).toISOString() + ' - ' + new Date(snap.metadata.dailyWindow.endMs).toISOString());
+    }
+    if (snap && snap.metadata && snap.metadata.sleepWindow) {
+      lines.push('Ventana sueño (UTC): ' + new Date(snap.metadata.sleepWindow.startMs).toISOString() + ' - ' + new Date(snap.metadata.sleepWindow.endMs).toISOString());
+    }
+    if (snap && snap.metadata && snap.metadata.cacheHit) lines.push('Instantánea reutilizada, antigüedad: ' + Math.round(snap.metadata.cacheAgeMs / 1000) + ' s');
     lines.push('Pasos: ' + (data.steps === null || data.steps === undefined ? 'sin dato' : Number(data.steps).toLocaleString()));
     lines.push('Distancia: ' + (data.distanceKm === null || data.distanceKm === undefined || data.distanceKm <= 0 ? 'sin dato' : data.distanceKm + ' km'));
-    lines.push('Energ?a: ' + (data.caloriesKcal === null || data.caloriesKcal === undefined ? 'sin dato' : data.caloriesKcal + ' kcal'));
+    lines.push('Calorías totales Google Fit (incluyen gasto en reposo): ' + (data.caloriesKcal === null || data.caloriesKcal === undefined ? 'sin dato' : data.caloriesKcal + ' kcal'));
     lines.push('Frecuencia card?aca en reposo: ' + (data.rhrBpm === null || data.rhrBpm === undefined ? 'sin dato v?lido' : data.rhrBpm + ' bpm'));
     lines.push('Sue?o: ' + (data.sleepMinutes === null || data.sleepMinutes === undefined || data.sleepMinutes <= 0 ? 'sin dato' : (data.sleepMinutes / 60).toFixed(1) + ' h'));
     const received = ['steps', 'distanceKm', 'caloriesKcal', 'rhrBpm', 'sleepMinutes'].filter(function(key) { return data[key] !== null && data[key] !== undefined && data[key] > 0; });
@@ -474,6 +481,7 @@ function _generateExecutiveStatusDashboard_() {
   const basal = nvram.L4_Basal || { baseline_rhr: 43, target_steps: 8000, target_sleep_hrs: 7.3 };
   const sessionEvents = (nvram.L1_Working && nvram.L1_Working.session_events) || [];
   const semanticMemory = typeof Memory_listSemantic === 'function' ? Memory_listSemantic({ limit: 8 }) : [];
+  const biometricHistory = typeof Memory_listBiometricObservations === 'function' ? Memory_listBiometricObservations({ limit: 90 }) : [];
   const outcomeRecords = (((nvram.L3_Semantic || {}).outcome_ledger || {}).records || []).slice(-5).reverse();
 
   // 1. Status Biométrico - Consulta al Sensor Engine Vivo
@@ -515,6 +523,7 @@ function _generateExecutiveStatusDashboard_() {
                    '• Referencia: RHR ' + (basal.baseline_rhr || 43) + ' bpm | Sueño ' + (basal.target_sleep_hrs || 7.3) + 'h | Pasos ' + (basal.target_steps || 8000) + '\n' +
                    '• Escudo: <i>Anti-Alucinación Activo</i>';
   }
+  biometryText += '\n• Días con observación biométrica estructurada en L2: <b>' + biometricHistory.length + '</b>';
 
   // 2. Cooldown Cognitivo & Memoria L1
   const l1Context = typeof _extractL1CognitiveContext === 'function'

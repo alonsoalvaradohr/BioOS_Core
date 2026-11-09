@@ -325,7 +325,44 @@ function Memory_searchSemantic(query, options) {
     .map(function(atom) { return { atom: atom, score: Memory_cosine_(q.vector, atom.vector.vector) }; })
     .filter(function(row) { return row.score >= (Number(options.minScore) || 0.12); })
     .sort(function(a, b) { return b.score - a.score || Date.parse(b.atom.recordedAt) - Date.parse(a.atom.recordedAt); })
-    .slice(0, topK).map(function(row) { return { id: row.atom.id, type: row.atom.type, text: row.atom.text, source: row.atom.source, status: row.atom.status, confidence: row.atom.confidence, recordedAt: row.atom.recordedAt, expiresAt: row.atom.expiresAt, similarity: Number(row.score.toFixed(3)) }; });
+    .slice(0, topK).map(function(row) { return { id: row.atom.id, type: row.atom.type, text: row.atom.text, source: row.atom.source, status: row.atom.status, confidence: row.atom.confidence, recordedAt: row.atom.recordedAt, expiresAt: row.atom.expiresAt, evidenceIds: (row.atom.evidenceIds || []).slice(0, 8), similarity: Number(row.score.toFixed(3)) }; });
+}
+
+/** Exact daily sensor observations stay structured in L2; they are not embedded as prose. */
+function Memory_storeBiometricObservation(telemetry) {
+  if (!telemetry || telemetry.is_live_telemetry !== true || !telemetry.data || !telemetry.window || !telemetry.window.startMs) return { ok: false, reason: 'NO_LIVE_OBSERVATION' };
+  var observationId = 'bio-' + String(telemetry.window.startMs), observation = {
+    observationId: observationId, timestamp: telemetry.fetchedAt || new Date().toISOString(),
+    source: String(telemetry.source || 'unknown'), timeZone: String(telemetry.timeZone || 'unknown'),
+    window: telemetry.window, sleepWindow: telemetry.sleepWindow || null,
+    metrics: { steps: telemetry.data.steps, distanceKm: telemetry.data.distanceKm, caloriesKcal: telemetry.data.caloriesKcal, rhrBpm: telemetry.data.rhrBpm, sleepMinutes: telemetry.data.sleepMinutes }
+  };
+  mutateNVRAM(function(state) {
+    var lake = state.L2_Episodic.raw_data_lake;
+    state.L2_Episodic.raw_data_lake = lake.filter(function(item) { return !(item && item.data_type === 'biometric_daily' && item.payload && item.payload.observationId === observationId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: observation.timestamp, data_type: 'biometric_daily', payload: observation });
+  }, 'Mem_Ingest_Biometric_Daily');
+  return { ok: true, observationId: observationId };
+}
+
+function Memory_listBiometricObservations(options) {
+  var limit = Math.max(1, Math.min(90, Number((options || {}).limit) || 14));
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function(item) { return item && item.data_type === 'biometric_daily' && item.payload && item.payload.observationId; })
+    .slice(-limit).map(function(item) { return item.payload; });
+}
+
+/** Obsidian-like view assembled from semantic atoms and their evidence IDs. */
+function Memory_buildEvidenceGraph_(atoms, observations) {
+  atoms = Array.isArray(atoms) ? atoms : []; observations = Array.isArray(observations) ? observations : [];
+  var observationIds = {};
+  observations.forEach(function(item) { observationIds[item.observationId] = true; });
+  var edges = [];
+  atoms.forEach(function(atom) { (atom.evidenceIds || []).forEach(function(evidenceId) { if (observationIds[evidenceId]) edges.push({ from: atom.id, to: evidenceId, relation: 'reported_with_observation' }); }); });
+  return {
+    nodes: atoms.map(function(atom) { return { id: atom.id, kind: atom.type, text: atom.text, source: atom.source, status: atom.status, evidenceIds: atom.evidenceIds || [] }; }).concat(observations.map(function(item) { return { id: item.observationId, kind: 'biometric_daily', source: item.source, timestamp: item.timestamp, window: item.window, metrics: item.metrics }; })),
+    edges: edges.slice(0, 60)
+  };
 }
 
 function Memory_captureUserFeedback(userNlp, requestContext) {
@@ -336,9 +373,11 @@ function Memory_captureUserFeedback(userNlp, requestContext) {
     ['nutrition', userNlp.adherencia_nutricional, 7],
     ['plan', userNlp.intenciones_futuras, 14]
   ], saved = 0, evidenceId = String((requestContext || {}).eventId || (requestContext || {}).requestId || ''), additions = [];
+  var linkedEvidence = evidenceId ? [evidenceId] : [];
+  if ((requestContext || {}).observationId) linkedEvidence.push(String(requestContext.observationId));
   groups.forEach(function(group) { (Array.isArray(group[1]) ? group[1] : []).slice(0, 8).forEach(function(text, index) {
     if (typeof text !== 'string' || text.trim().length < 3) return;
-    additions.push(Memory_createSemanticAtom_({ id: 'nlp-' + Memory_hashFeature_(evidenceId + ':' + group[0] + ':' + text).index.toString(36), type: group[0], text: text, source: 'telegram_user_nlp', status: 'reported', ttlDays: group[2], evidenceIds: evidenceId ? [evidenceId] : [] }, text));
+    additions.push(Memory_createSemanticAtom_({ id: 'nlp-' + Memory_hashFeature_(evidenceId + ':' + group[0] + ':' + text).index.toString(36), type: group[0], text: text, source: 'telegram_user_nlp', status: 'reported', ttlDays: group[2], evidenceIds: linkedEvidence }, text));
   }); });
   if (additions.length) { mutateNVRAM(function(state) { state.L3_Semantic.semantic_memories = Memory_appendSemanticAtoms_(state.L3_Semantic.semantic_memories, additions); }, 'Mem_Write_Semantic'); saved = additions.length; }
   return saved;
