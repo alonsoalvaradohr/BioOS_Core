@@ -25,10 +25,11 @@ La exportacion muestra que hay datos Xiaomi en Health Connect, pero no existe au
 Trabajo necesario para completar esa ruta:
 
 1. Crear una app/puente Android con permisos Health Connect minimos y consentimiento visible del usuario.
-2. Leer por origen `com.xiaomi.wearable`, conservar timestamp y procedencia por registro, y deduplicar sesiones/intervalos antes de resumir.
-3. Enviar un resumen firmado a un endpoint autenticado. No aceptar datos biometrico-anonimos ni convertir falta de datos en cero.
-4. Guardar los snapshots en un historial acotado y mostrar en `/doctor` antiguedad, fuente y campos faltantes.
-5. Importar outcomes de entrenamiento confirmados por el usuario. Solo con ese historial habilitar tendencias semanales; ACWR requiere semanas de carga observada, no texto generado.
+2. Descubrir en Health Connect el `DataOrigin` real de Mi Fitness en el telefono; no asumir `com.xiaomi.wearable`. Conservar timestamp y procedencia por registro, y deduplicar sesiones/intervalos antes de resumir.
+3. Autenticar el puente Android con clave ECDSA P-256 no exportable de Android Keystore y firma por solicitud; el Worker valida frescura, esquema y replay, y firma su reenvio a GAS con un HMAC separado. No reutilizar token Telegram ni aceptar datos sin origen.
+4. Pedir permisos Health Connect de lectura minimos, iniciar con sync en primer plano y hacer el sync de fondo opcional. Guardar snapshots acotados y mostrar en `/doctor` antiguedad, fuente, permisos y campos faltantes.
+5. Implementar el cerebro runtime por separado del harness: persistir atomos semanticos y outcomes confirmados con fuente/fecha/estado; L1 solo es contexto corto. Añadir embeddings versionados y recuperacion top-k despues del adaptador durable, con filtros de procedencia, recencia y consentimiento.
+6. Solo con outcomes confirmados habilitar tendencias semanales; ACWR requiere semanas de carga observada, no texto generado.
 
 El adaptador no debe asignar RHR desde frecuencia cardiaca tomada durante ejercicio. En la exportacion revisada, los registros de RHR no estaban atribuidos a Mi Fitness; hasta encontrar una fuente RHR genuina, BioOS debe marcar RHR como no disponible.
 
@@ -52,3 +53,9 @@ El adaptador no debe asignar RHR desde frecuencia cardiaca tomada durante ejerci
 - [ ] El health check de produccion no informa WARN por sensores ni errores pendientes de VFS, permisos o proxy.
 
 Hasta que se cumplan esos puntos, el sistema esta en endurecimiento local, no en “autonomia de produccion”.
+
+## Segundo cerebro runtime: estado real y diseño
+
+La especificacion en [`ADR-002`](adr/ADR-002-runtime-brain-xiaomi-healthconnect.md) separa el harness del cerebro conversacional de BioOS. A la fecha, L1 solo conserva hasta 10 eventos; el outcome ledger es una funcion pura sin persistencia; no hay proveedor de embeddings ni indice vectorial. Por tanto, la memoria semantica activa aun no existe en runtime.
+
+Un embedding es un vector de `d` componentes; `N` recuerdos forman una matriz `N x d` que un indice busca por similitud. No hace falta guardar tensores: las series biometricas siguen siendo registros estructurados con timestamps. El primer proveedor propuesto es BGE-M3 + Vectorize con cuotas gratuitas y limites locales, si se confirma la cuenta Cloudflare y se aprueba la politica de retencion. Sin cuota/disponibilidad, la recuperacion estructurada/por palabras clave sigue operativa; no activar facturacion automaticamente.
