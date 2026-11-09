@@ -389,6 +389,30 @@ function _handleBypassCommand(command, sourceChatId) {
       _diagnoseSensorsLive_(sourceChatId);
       return;
     }
+    if (normalizedCommand === "/syncfit" || normalizedCommand === "/fitarchive") {
+      const arg = rawCmd.split(/\s+/)[1] || '';
+      if (arg.toLowerCase() === 'status') {
+        const status = Sensor_GoogleFit_archiveStatus_(), job = status.job, c = status.catalog;
+        const text = '<b>Archivo histórico Google Fit · Drive</b>\nEstado: ' + _orchestratorEscapeHtml_((job && job.status) || (c.lastSync && c.lastSync.status) || 'NO INICIADO') +
+          '\nFuentes catalogadas: ' + c.sourceCount + ' · shards: ' + c.shardCount + ' · puntos copiados: ' + c.pointCount +
+          (job ? '\nProgreso: ' + Math.min(job.sourceIndex, job.sourceCount) + '/' + job.sourceCount + ' fuentes · ventana ' + job.since.slice(0, 10) + ' → ' + job.until.slice(0, 10) : '') +
+          '\nHuecos/permisos: ' + ((c.lastSync && c.lastSync.gaps) ? c.lastSync.gaps.length : 0) + '. Usa <code>/syncfit</code> para iniciar o <code>/syncfit pausa</code> para pausar.';
+        if (typeof _rawSystemNotify === 'function') _rawSystemNotify(text, sourceChatId);
+        return;
+      }
+      if (/^(pausa|pause)$/i.test(arg)) {
+        const paused = Sensor_GoogleFit_pauseArchiveSync_();
+        if (typeof _rawSystemNotify === 'function') _rawSystemNotify(paused.ok ? 'Archivo pausado. El cursor y los shards confirmados se conservan; ejecuta <code>/syncfit</code> para reanudar.' : 'No se pudo pausar el archivo.', sourceChatId);
+        return;
+      }
+      const days = /^\d{1,5}$/.test(arg) ? Number(arg) : undefined;
+      const started = Sensor_GoogleFit_beginArchiveSync_({ days: days, chatId: sourceChatId, mode: 'backfill' });
+      const msg = started.ok
+        ? (started.alreadyRunning ? 'El backfill ya está activo.' : 'Inicié la copia histórica de solo lectura desde 2014 o la ventana elegida. Los puntos originales se comprimen y archivan en Drive BioOS; el proceso es reanudable. Usa <code>/syncfit status</code> para progreso.')
+        : 'No inicié la copia. Motivo: <code>' + _orchestratorEscapeHtml_(started.reason || 'FIT_ARCHIVE_START_FAILED') + '</code>. No se modificó Google Fit.';
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(msg, sourceChatId);
+      return;
+    }
     if (normalizedCommand === "/reauth" || normalizedCommand === "/auth") {
       const auth = _bioosGoogleFitLocationAuthorization_();
       let authMsg = '<b>Acceso de distancia Google Fit</b>\nScope mínimo consultado: <code>fitness.location.read</code>; BioOS no solicitará permisos adicionales.';
@@ -430,6 +454,7 @@ function _handleBypassCommand(command, sourceChatId) {
       const helpMsg = '<b>BioOS ' + version + ' - Comandos</b>\n\n' +
                       '<code>/estado</code> - Telemetria disponible y memoria reciente.\n' +
                       '<code>/doctor</code> - Estado de sensores, valores y fuente.\n' +
+                      '<code>/syncfit</code> - Copia reanudable del historial Google Fit a Drive; <code>/syncfit status</code> muestra cobertura, <code>/syncfit pausa</code> pausa.\n' +
                       '<code>/reauth</code> - Ayuda de autenticación; /doctor consulta la ruta en vivo.\n' +
                       '<code>/recordar texto</code> - Guarda un recuerdo duradero.\n' +
                       '<code>/olvidar ID</code> - Elimina un recuerdo guardado.\n' +

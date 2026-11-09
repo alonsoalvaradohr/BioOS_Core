@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.15.0 - 2026-11-09
+
+- Adds `/syncfit` to copy paginated Google Fit data source datasets into resumable gzip shards in the owner's BioOS Drive, with a Drive catalog, checksums, cursors, status, pause/resume and daily incremental sync.
+- Natural-language cadence-history queries now calculate min/average/max from original archived points and keep user-submitted visual reports separate from provider telemetry.
+- Coverage and access gaps are time-bounded; incomplete backfills, denied sources, unreadable catalogs and truncated source inventories cannot be reported as complete absence.
+- Raw biometric samples stay in private Drive files; semantic memory stores only a catalog pointer and summary. No new OAuth scopes or writes to Google Fit.
+
 ## 8.14.1 - 2026-11-09
 
 - Cadence/stride history questions now read their own L2 report partition; they no longer fall through to generic biometrics or claim absence without querying the durable store.

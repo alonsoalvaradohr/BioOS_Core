@@ -324,7 +324,7 @@ function _orchestratorReportWindow_(triggerEvent, nowMs) {
 
 function _orchestratorHistoryRequest_(question) {
   var q = String(question || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  if (/(cadencia|cadence|zancada|stride|\bspm\b)/i.test(q)) return { type: 'activity_metrics', metric: /(zancada|stride)/i.test(q) ? 'stride' : 'cadence', startMs: Date.now() - 180 * Sensor_HOURS_24_MS, endMs: Date.now() };
+  if (/(cadencia|cadence|zancada|stride|\bspm\b)/i.test(q)) return { type: 'activity_metrics', metric: /(zancada|stride)/i.test(q) ? 'stride' : 'cadence', stat: /(minim|menor|baj[ao]|lowest|minimum)/i.test(q) ? 'min' : /(maxim|mayor|alt[ao]|highest|maximum)/i.test(q) ? 'max' : /(promedio|media|average|mean)/i.test(q) ? 'average' : 'all', startMs: Date.UTC(2014, 0, 1), endMs: Date.now() };
   var running = /(carrer|running|run\b|rodaje|entrenamiento|sesion|actividad deportiva)/i.test(q);
   var pace = /(avg\s*pace|average\s*pace|ritmo|pace|min\/km|minutos por kilometro)/i.test(q);
   var latestRun = /(ultim|recient|last|actual|reciente)/i.test(q) && running;
@@ -466,7 +466,24 @@ function _buildActivityMetricsHistoryAnswer_(payload) {
   var metric = payload && payload.history_request && payload.history_request.metric || 'cadence';
   var title = metric === 'stride' ? 'zancada' : 'cadencia';
   if (!result.available) return { mensaje_telegram: 'No pude consultar la memoria L2 de métricas técnicas; no puedo concluir que la cadencia esté ausente. Estado: lector de memoria no disponible.', resumen_ejecutivo: 'L2 no consultable para actividad técnica.', evidencia: result };
-  if (!records.length) return { mensaje_telegram: '<b>No encontré registros de ' + title + ' en L2.</b> La consulta sí leyó la memoria durable de reportes visuales de actividad (ventana: últimos 180 días) y no hay un dato guardado que pueda citar. Google Fit no aporta cadencia por esta ruta. Envía el panel de cadencia como foto o texto para conservarlo como métrica reportada.', resumen_ejecutivo: 'L2 consultada; sin reportes visuales de métricas técnicas en la ventana solicitada.', evidencia: { source: result.source, recordsFound: 0, windowDays: 180 } };
+  var fit = result.googleFit || {}, stat = payload.history_request.stat || 'all';
+  if (metric === 'cadence' && fit.state === 'OBSERVED') {
+    var statLabel = stat === 'min' ? 'mínima' : stat === 'max' ? 'máxima' : stat === 'average' ? 'promedio' : 'resumen';
+    var value = stat === 'min' ? fit.min : stat === 'max' ? fit.max : stat === 'average' ? fit.average : null;
+    var valuesText = stat === 'all' ? 'Mín. ' + Number(fit.min).toFixed(1) + ' · promedio ' + Number(fit.average).toFixed(1) + ' · máx. ' + Number(fit.max).toFixed(1) + ' SPM.' : 'Cadencia ' + statLabel + ': ' + Number(value).toFixed(1) + ' SPM.';
+    var coverageText = fit.completeCoverage ? 'Cobertura completa del archivo consultado' : 'Resultado provisional; la cobertura histórica todavía es parcial';
+    return { mensaje_telegram: '<b>' + valuesText + '</b>\n' + coverageText + '. Fuente: puntos originales de Google Fit en Drive BioOS; ' + fit.records + ' registros. Ventana desde 2014-01-01 hasta ' + (fit.coverageEndMs ? new Date(fit.coverageEndMs).toISOString().slice(0, 10) : 'fecha no disponible') + (fit.completeCoverage ? '.' : '. Revisa <code>/syncfit status</code>.'),
+      resumen_ejecutivo: 'Estadística calculada sobre puntos originales Google Fit; se declara cobertura.', evidencia: fit };
+  }
+  if (metric === 'cadence' && (!fit.state || ['NOT_INITIALIZED', 'SYNC_NOT_STARTED', 'COVERAGE_INCOMPLETE'].indexOf(fit.state) !== -1)) {
+    var visualMinimum = records.reduce(function(value, record) { var n = Number(((record || {}).metrics || {}).cadenceAvgSpm); return n > 0 && (value === null || n < value) ? n : value; }, null);
+    var visualNote = visualMinimum === null ? '' : ' En capturas del usuario guardadas, el menor promedio visible es ' + visualMinimum + ' SPM; es un promedio, no una cadencia mínima instantánea.';
+    return { mensaje_telegram: '<b>El mínimo histórico de Google Fit todavía no está indexado en Drive.</b> No afirmo que no exista: antes BioOS solo leía agregados y sesiones. Ejecuta <code>/syncfit</code>; cuando termine el backfill calcularé el mínimo sobre puntos originales.' + visualNote,
+      resumen_ejecutivo: 'Histórico raw aún no indexado o cobertura incompleta; no se declara ausencia.', evidencia: { googleFitArchive: fit, visualReportCount: records.length } };
+  }
+  if (metric === 'cadence' && fit.state === 'ACCESS_GAP') return { mensaje_telegram: 'La fuente de cadencia no fue accesible durante la sincronización Google Fit. No concluyo que Mi Fitness carezca del dato; consulta <code>/syncfit status</code> para ver el permiso/error.', resumen_ejecutivo: 'Gap de acceso a fuente Fit de cadencia.', evidencia: fit };
+  if (metric === 'cadence' && fit.state === 'NO_MATCHING_POINTS' && stat === 'min') return { mensaje_telegram: 'El backfill terminó y no encontró puntos <code>com.google.step_count.cadence</code> en las fuentes visibles de Google Fit. Eso solo confirma ausencia en ese canal consultado; Mi Fitness o Health Connect aún podrían conservarlos.', resumen_ejecutivo: 'Sin puntos de cadencia en fuentes Fit visibles para la cobertura archivada.', evidencia: fit };
+  if (!records.length && metric !== 'cadence') return { mensaje_telegram: '<b>No encontré registros de ' + title + ' en L2.</b> La memoria consultada sí fue leída; no hay captura guardada que pueda citar.', resumen_ejecutivo: 'L2 consultada; sin métricas visuales guardadas.', evidencia: { source: result.source, recordsFound: 0 } };
   var lines = ['<b>Registros de ' + title + ' recuperados de L2</b>'];
   records.slice(0, 5).forEach(function(record, index) {
     var m = record.metrics || {}, value = metric === 'stride' ? m.strideAvgCm : m.cadenceAvgSpm, max = metric === 'stride' ? m.strideMaxCm : m.cadenceMaxSpm;
@@ -506,7 +523,8 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
       if (typeof Memory_listReportedRunningSessions === 'function') payload.historical_activities.reportedSessions = Memory_listReportedRunningSessions({ startMs: payload.history_request.startMs, endMs: payload.history_request.endMs, limit: 20 });
       if (payload.historical_activities.sessions.length && typeof Memory_storeRunningSessions === 'function') Memory_storeRunningSessions(payload.historical_activities);
     } else if (payload.history_request && payload.history_request.type === 'activity_metrics') {
-      payload.activity_metrics_history = { available: typeof Memory_listReportedActivityMetrics === 'function', source: 'bioos_l2', records: typeof Memory_listReportedActivityMetrics === 'function' ? Memory_listReportedActivityMetrics({ sinceMs: payload.history_request.startMs, limit: 20 }) : [] };
+      payload.activity_metrics_history = { available: typeof Memory_listReportedActivityMetrics === 'function', source: 'bioos_l2', records: typeof Memory_listReportedActivityMetrics === 'function' ? Memory_listReportedActivityMetrics({ sinceMs: payload.history_request.startMs, limit: 50 }) : [] };
+      if (typeof Sensor_GoogleFit_queryArchiveStats_ === 'function' && payload.history_request.metric === 'cadence') payload.activity_metrics_history.googleFit = Sensor_GoogleFit_queryArchiveStats_({ dataTypeName: 'com.google.step_count.cadence', startMs: payload.history_request.startMs, endMs: payload.history_request.endMs });
     } else if (payload.history_request && payload.history_request.type === 'sleep_schedule' && typeof Sensor_GoogleFit_fetchSleepHistory_ === 'function') {
       payload.historical_sleep = _safeETL('GoogleFit_Sleep_History', function () {
         return Sensor_GoogleFit_fetchSleepHistory_(payload.history_request.startMs, payload.history_request.endMs);

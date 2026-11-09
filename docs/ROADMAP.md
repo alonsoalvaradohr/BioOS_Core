@@ -1,5 +1,12 @@
 # Roadmap BioOS - estado al 2026-11-09
 
+## Historial raw Google Fit y consulta de métricas
+
+- Ticket BIOOS-20261109-12 implementa archivo paginado de fuentes/datasets Google Fit en gzip shards dentro del Drive privado de BioOS, catálogo temporal, checksum y cursor reanudable. `/syncfit`, `/syncfit status` y `/syncfit pausa` permiten operarlo desde Telegram.
+- Las consultas de cadencia pasan por estadísticas de los puntos originales del tipo `com.google.step_count.cadence`; la memoria visual reportada sigue identificada como `reported` y no se mezcla con medidas del proveedor.
+- El despliegue de código no significa que ya se haya copiado la cuenta: Alonso debe iniciar el backfill con `/syncfit` y revisar `/syncfit status`. Hasta que termine, la respuesta declara índice/cobertura incompletos. Huecos 403 se conservan por tipo y periodo.
+- Google Fit REST se usa como canal existente y transitorio: Google anuncia deprecación en 2026. Evaluar continuidad por Health Connect Android; no asumir que un cambio a Google Health API recoge los datos originados por Mi Fitness.
+
 Codigo local, runtime GAS y flujos externos son estados distintos. Una correccion local no significa que Telegram ya use el cambio.
 
 ## Hallazgos confirmados en el repositorio

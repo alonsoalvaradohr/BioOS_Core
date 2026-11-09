@@ -1,6 +1,6 @@
 ﻿{
   "name": "bioos-core",
-  "version": "8.14.1",
+  "version": "8.15.0",
   "private": true,
   "description": "Kernel cognitivo y canal de ingesta BioOS sobre Google Apps Script.",
   "scripts": {
