@@ -1,5 +1,12 @@
 # Changelog
 
+## 8.14.0 - 2026-11-09
+
+- Technical cadence/stride panels are extracted and persisted independently of full session cards, with Telegram photo event and `reported` provenance.
+- A recent running-technique question can be recovered from L1 when Telegram dispatches its following photo as a separate job.
+- Photo inference failures and unreadable panels now receive an explicit, actionable response instead of generic SRE degradation text.
+- Technique guidance is evidence-bounded; cadence is not treated as a universal target, and a single image is not used to diagnose gait.
+
 ## 8.13.0 - 2026-11-09
 
 - `/doctor` checks the single `fitness.location.read` permission needed for distance; private `/reauth` returns its Apps Script consent URL only when authorization is actually required. No scopes are added.

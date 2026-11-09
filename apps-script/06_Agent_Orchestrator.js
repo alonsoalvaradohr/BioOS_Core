@@ -25,6 +25,9 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
           payload.historical_activities.reportedSessions = payload.reported_run_capture.sessions.concat(payload.historical_activities.reportedSessions || []);
         }
       }
+      if (triggerEvent === 'USER_FEEDBACK' && payload.user_nlp && Array.isArray(payload.user_nlp.activity_metrics) && payload.user_nlp.activity_metrics.length && typeof Memory_storeReportedActivityMetrics === 'function') {
+        payload.reported_activity_metrics = Memory_storeReportedActivityMetrics(payload.user_nlp.activity_metrics);
+      }
       if (typeof Memory_storeBiometricObservation === 'function' && payload.biometric_telemetry) {
         const storedObservation = Memory_storeBiometricObservation(payload.biometric_telemetry);
         if (storedObservation && storedObservation.ok) payload.current_observation_id = storedObservation.observationId;
@@ -40,12 +43,14 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
     if (triggerEvent === 'USER_FEEDBACK') payload.agent_route = _orchestratorRouteQuestion_(payload.user_text);
     const isHistoricalAnalytics = triggerEvent === 'USER_FEEDBACK' && !!payload.history_request;
     const isReportedRunCapture = triggerEvent === 'USER_FEEDBACK' && payload.reported_run_capture && payload.reported_run_capture.stored > 0;
+    const isReportedActivityMetrics = triggerEvent === 'USER_FEEDBACK' && payload.reported_activity_metrics && payload.reported_activity_metrics.stored > 0;
+    const isUnprocessedPhoto = triggerEvent === 'USER_FEEDBACK' && payload.user_nlp && /^inference_unavailable:|^no_activity_metrics_extracted$/.test(String(payload.user_nlp.photo_analysis_status || '')) && !isReportedRunCapture && !isReportedActivityMetrics;
 
     let approved = {};
     let taskCount = 0;
 
     // Para despachos periódicos (Morning/Evening), realizamos síntesis cognitiva directa unificada para latencia < 5s
-    if (triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING' || isHistoricalAnalytics || isReportedRunCapture) {
+    if (triggerEvent === 'MORNING_BRIEFING' || triggerEvent === 'EVENING_BRIEFING' || isHistoricalAnalytics || isReportedRunCapture || isReportedActivityMetrics || isUnprocessedPhoto) {
       approved = {};
     } else {
       const active = _determineActiveSpecialists(triggerEvent, rom.agent_prompts || {}, payload.agent_route);
@@ -61,8 +66,12 @@ function routeCognitiveTask(triggerEvent, rawPayload, requestContext) {
       ? _buildEvidenceBriefing_(triggerEvent, payload, memory)
       : isHistoricalAnalytics
         ? (payload.history_request.type === 'sleep_schedule' ? _buildHistoricalSleepScheduleAnswer_(payload) : payload.history_request.type === 'running_comparison' ? _buildRunningComparisonAnswer_(payload) : /^running_/.test(payload.history_request.type) ? _buildRunningAssessmentAnswer_(payload) : _buildHistoricalAnalyticsAnswer_(payload))
+      : isReportedActivityMetrics
+        ? _buildReportedActivityMetricsAnswer_(payload.reported_activity_metrics, payload.user_text, payload.reported_run_capture)
       : isReportedRunCapture
         ? _buildReportedRunCaptureAnswer_(payload.reported_run_capture)
+      : isUnprocessedPhoto
+        ? _buildPhotoAnalysisFailureAnswer_(payload.user_nlp.photo_analysis_status)
       : _synthesizeOrchestration_(rom, memory, payload, approved, taskCount, context);
     if (triggerEvent === 'USER_FEEDBACK' && typeof Memory_captureUserFeedback === 'function') {
       try { Memory_captureUserFeedback(payload.user_nlp, { requestId: context.requestId, eventId: context.eventId, observationId: payload.current_observation_id }); }
@@ -462,6 +471,7 @@ function _buildOrchestrationPayload_(triggerEvent, rawPayload, memory, context) 
   } else if (triggerEvent === 'USER_FEEDBACK') {
     payload.user_nlp = typeof compileQualitativeFeedback === 'function' ? compileQualitativeFeedback(rawPayload) : rawPayload;
     payload.user_text = _orchestratorExtractUserText_(rawPayload);
+    if (!payload.user_text && payload.user_nlp && Array.isArray(payload.user_nlp.activity_metrics) && payload.user_nlp.activity_metrics.length) payload.user_text = _orchestratorRecentActivityQuestion_(memory);
     payload.history_request = _orchestratorHistoryRequest_(payload.user_text);
     if (!payload.history_request) payload.biometric_telemetry = _extractBiometricTelemetry_(rawPayload, basal);
     if (payload.history_request && /^running_/.test(payload.history_request.type) && typeof Sensor_GoogleFit_fetchRecentRuns_ === 'function') {
@@ -519,6 +529,38 @@ function _orchestratorExtractUserText_(rawPayload) {
   if (Array.isArray(parsed)) return parsed.slice(0, 10).map(function(item) { return [item.text, item.caption].filter(Boolean).join(' '); }).join(' ').slice(0, 1000);
   if (parsed && typeof parsed.text === 'string') return parsed.text.slice(0, 1000);
   return typeof rawPayload === 'string' ? rawPayload.slice(0, 1000) : '';
+}
+
+function _orchestratorRecentActivityQuestion_(memory) {
+  var events = (((memory || {}).NVRAM || {}).L1_Working || {}).session_events || [], cutoff = Date.now() - 30 * 60 * 1000;
+  for (var i = events.length - 1; i >= 0; i--) {
+    var event = events[i], data = event && event.data || {}, stamp = Date.parse(event && event.timestamp || '');
+    var text = String(data.user_text || (data.tokens && data.tokens.user_text) || '');
+    if (event && event.origin === 'USER_FEEDBACK' && stamp >= cutoff && text && /(cadencia|zancada|tecnica|técnica|pisada|correr|carrera|ritmo)/i.test(text)) return text.slice(0, 500);
+  }
+  return '';
+}
+
+function _buildReportedActivityMetricsAnswer_(capture, question, runCapture) {
+  var m = capture && capture.metrics && capture.metrics[0] || {}, v = m.metrics || {};
+  var lines = ['<b>Métricas técnicas leídas de la captura</b>', 'Origen: reporte visual de ' + _orchestratorEscapeHtml_(m.sourceApp || 'la aplicación del reloj') + '; estado <b>reportado</b>, no telemetría directa de Google Fit.'];
+  if (m.activityDateLocal) lines.push('Fecha visible: ' + _orchestratorEscapeHtml_(m.activityDateLocal) + '.');
+  if (v.cadenceAvgSpm) lines.push('Cadencia: ' + v.cadenceAvgSpm + ' pasos/min de promedio' + (v.cadenceMaxSpm ? ', ' + v.cadenceMaxSpm + ' máximo' : '') + '.');
+  if (v.strideAvgCm) lines.push('Longitud de zancada mostrada: ' + v.strideAvgCm + ' cm de promedio' + (v.strideMaxCm ? ', ' + v.strideMaxCm + ' cm máximo' : '') + '.');
+  var run = runCapture && runCapture.sessions && runCapture.sessions[0];
+  if (run && run.distanceKm && run.derivedPaceSecondsPerKm) { var paceSec = Math.round(run.derivedPaceSecondsPerKm); lines.push('En la captura de sesión asociada: ' + Number(run.distanceKm).toFixed(2) + ' km a ' + Math.floor(paceSec / 60) + ':' + String(paceSec % 60).padStart(2, '0') + ' min/km (dato reportado).'); }
+  if (v.cadenceAvgSpm && /(cadencia|zancada|tecnica|técnica|pisada)/i.test(String(question || ''))) {
+    lines.push('Estos números solos no diagnostican una técnica deficiente: la cadencia depende del ritmo, estatura y terreno. No fuerces una cadencia universal ni alargues la zancada para perseguirla.');
+    lines.push('En un rodaje fácil, prueba 4–6 bloques de 1 minuto con pasos apenas más rápidos y algo más cortos (aprox. +2–3% sobre tu cadencia cómoda), separados por 2 minutos naturales. Mantén postura relajada y el apoyo bajo el cuerpo; conserva el cambio solo si se siente fluido y sin dolor.');
+    lines.push('Para valorar la mecánica hacen falta además el ritmo de esa sesión y un video lateral/frontal; esta captura no muestra aterrizaje, oscilación vertical ni simetría.');
+  } else lines.push('La captura no trae suficiente contexto para valorar la mecánica ni comparar esta sesión con otra.');
+  if (question) lines.push('Pregunta asociada recuperada: <i>' + _orchestratorEscapeHtml_(question) + '</i>.');
+  return { mensaje_telegram: lines.join('\n'), resumen_ejecutivo: 'Métricas técnicas reportadas conservadas en L2 con evento de captura y respuesta limitada a evidencia visible.', evidencia: { reportId: m.reportId, source: m.source, status: m.status, eventId: m.evidenceEventId } };
+}
+
+function _buildPhotoAnalysisFailureAnswer_(status) {
+  var detail = String(status || 'no_activity_metrics_extracted');
+  return { mensaje_telegram: '<b>Recibí la captura, pero no pude extraer métricas verificables.</b> No guardé valores ni inferí técnica. Estado del análisis: <code>' + _orchestratorEscapeHtml_(detail) + '</code>. Reenvía un recorte nítido del panel de cadencia y zancada; BioOS contestará cuando pueda leer los números.', resumen_ejecutivo: 'Fallo de lectura visual comunicado explícitamente; no se ejecutó síntesis clínica genérica ni se guardaron métricas inventadas.', evidencia: { photoAnalysisStatus: detail } };
 }
 
 function _safeETL(taskName, etlFunction, fallbackValue) {

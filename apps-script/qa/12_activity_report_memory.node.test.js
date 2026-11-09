@@ -5,7 +5,7 @@ const path = require('path');
 const vm = require('vm');
 const assert = require('node:assert/strict');
 
-const state = { NVRAM: { L2_Episodic: { raw_data_lake: [] } } };
+const state = { NVRAM: { L1_Working: { session_events: [] }, L2_Episodic: { raw_data_lake: [] } } };
 let requestedScopes = null, authStatus = 'REQUIRED', notifiedMessage = '';
 const utilities = { formatDate: (date, _tz, pattern) => {
   const local = new Date(date.getTime() - 6 * 60 * 60 * 1000).toISOString();
@@ -22,7 +22,7 @@ const context = {
   _rawSystemNotify: (message) => { notifiedMessage = String(message); return true; },
   executeWithResilience: (_name, fn) => fn(),
   sendSystemTelemetry: () => {},
-  invokeUniversalLLM: () => ({ sintomatologia_fisica: [], carga_alostatica_percibida: [], adherencia_nutricional: [], intenciones_futuras: [], activity_sessions: [{ source_app: 'Mi Fitness', activity_date_local: '2026-11-07', activity_time_local: '17:13', distance_km: 5, duration_seconds: 1500, displayed_avg_pace_seconds_per_km: 300 }] })
+  invokeUniversalLLM: () => ({ sintomatologia_fisica: [], carga_alostatica_percibida: [], adherencia_nutricional: [], intenciones_futuras: [], activity_metrics: [{ source_app: 'Mi Fitness', cadence_avg_spm: 159, cadence_max_spm: 173, stride_avg_cm: 92, stride_max_cm: 93 }], activity_sessions: [{ source_app: 'Mi Fitness', activity_date_local: '2026-11-07', activity_time_local: '17:13', distance_km: 5, duration_seconds: 1500, displayed_avg_pace_seconds_per_km: 300 }] })
 };
 vm.createContext(context);
 for (const file of ['02_Mem_Hierarchical.js', '03b_Net_Webhook.js', '05_Bio_Compiler.js', '06_Agent_Orchestrator.js']) {
@@ -48,6 +48,7 @@ context._handleBypassCommand('/reauth', '123');
 assert.doesNotMatch(notifiedMessage, /usercallback/, 'already authorized scope should not issue a consent URL');
 const compiled = context.compileQualitativeFeedback(JSON.stringify({ _type: 'bioos_ingress_batch', items: [{ kind: 'photo', eventId: 'photo-evidence-1', data: 'synthetic-image-data' }] }));
 assert.equal(compiled.activity_sessions[0].evidenceEventId, 'photo-evidence-1', 'image extraction must be anchored to the Telegram photo event');
+assert.equal(compiled.activity_metrics[0].evidenceEventId, 'photo-evidence-1', 'technical metrics must be anchored independently from full run sessions');
 
 const fitStart = Date.parse('2026-11-07T17:19:00-06:00');
 context.Memory_storeRunningSessions({ source: 'google_fit', fetchedAt: new Date().toISOString(), sessions: [{ id: 'fit-1', startMs: fitStart, endMs: fitStart + 3600000, activityType: 8, durationMinutes: 60, distanceKm: null }] });
@@ -57,5 +58,18 @@ assert.equal(stored.sessions[0].status, 'reported', 'source must remain user-rep
 assert.equal(stored.sessions[0].googleFitSessionId, 'fit-1', 'single close Fit session should be linked as probable');
 assert.equal(stored.sessions[0].paceConsistency, 'consistent', 'visible pace should be checked against duration/distance');
 assert.equal(context.Memory_storeReportedRunningSessions([{ source_app: 'Mi Fitness', distance_km: 5, duration_seconds: 1500 }], {}).stored, 0, 'unanchored model output must not enter memory');
-console.log('PASS running operation routing and provenance-preserving activity memory');
+const metricStore = context.Memory_storeReportedActivityMetrics([{ evidenceEventId: 'cadence-photo-1', source_app: 'Mi Fitness', cadence_avg_spm: 159, cadence_max_spm: 173, stride_avg_cm: 92, stride_max_cm: 93 }]);
+assert.equal(metricStore.stored, 1, 'technical metrics should persist without session date/distance');
+assert.equal(metricStore.metrics[0].status, 'reported');
+assert.equal(metricStore.metrics[0].metrics.cadenceAvgSpm, 159);
+state.NVRAM.L1_Working.session_events.push({ timestamp: new Date().toISOString(), origin: 'USER_FEEDBACK', data: { tokens: { user_text: 'Considerando mi cadencia, ¿cómo podría mejorar mi técnica?' } } });
+assert.match(context._orchestratorRecentActivityQuestion_(state), /cadencia/i, 'photo should recover a nearby technical question from L1');
+const technicalAnswer = context._buildReportedActivityMetricsAnswer_(metricStore, '¿Cómo mejorar técnica?');
+assert.match(technicalAnswer.mensaje_telegram, /159 pasos\/min/);
+assert.match(technicalAnswer.mensaje_telegram, /no diagnostican una técnica deficiente/);
+assert.match(context._buildPhotoAnalysisFailureAnswer_('no_activity_metrics_extracted').mensaje_telegram, /no pude extraer métricas verificables/);
+context.invokeUniversalLLM = () => { throw new Error('VISION_PROVIDER_TIMEOUT'); };
+const failedVision = context.compileQualitativeFeedback(JSON.stringify({ _type: 'bioos_ingress_batch', items: [{ kind: 'photo', eventId: 'photo-timeout', data: 'synthetic-image-data' }] }));
+assert.match(failedVision.photo_analysis_status, /^inference_unavailable:/, 'vision provider failure should be returned as a recoverable status');
+console.log('PASS running intent, report memory, cadence technique response and explicit vision fallback');
 }

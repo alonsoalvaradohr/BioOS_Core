@@ -446,6 +446,33 @@ function Memory_listReportedRunningSessions(options) {
   return lake.filter(function (item) { var r = item && item.data_type === 'reported_running_session' && item.payload; return r && r.activityDateLocal && r.activityDateLocal >= startDate && r.activityDateLocal <= endDate; }).map(function (item) { return item.payload; }).sort(function (a, b) { return String(b.activityDateLocal + (b.activityTimeLocal || '')).localeCompare(String(a.activityDateLocal + (a.activityTimeLocal || ''))); }).slice(0, limit);
 }
 
+/** Store technical metrics visible in a workout image even when no date/distance card is shown. */
+function Memory_storeReportedActivityMetrics(items) {
+  if (!Array.isArray(items) || !items.length) return { stored: 0, metrics: [] };
+  var recordedAt = new Date().toISOString(), saved = [];
+  items.slice(0, 5).forEach(function(input, index) {
+    if (!input || !input.evidenceEventId) return;
+    var cadence = Number(input.cadence_avg_spm), cadenceMax = Number(input.cadence_max_spm);
+    var stride = Number(input.stride_avg_cm), strideMax = Number(input.stride_max_cm);
+    var values = { cadenceAvgSpm: cadence >= 40 && cadence <= 260 ? cadence : null,
+      cadenceMaxSpm: cadenceMax >= 40 && cadenceMax <= 300 ? cadenceMax : null,
+      strideAvgCm: stride >= 20 && stride <= 250 ? stride : null,
+      strideMaxCm: strideMax >= 20 && strideMax <= 300 ? strideMax : null };
+    if (!values.cadenceAvgSpm && !values.cadenceMaxSpm && !values.strideAvgCm && !values.strideMaxCm) return;
+    var date = /^\d{4}-\d{2}-\d{2}$/.test(String(input.activity_date_local || '')) ? String(input.activity_date_local) : null;
+    saved.push({ reportId: String(input.evidenceEventId).slice(0, 100) + '-metrics-' + index,
+      sourceApp: String(input.source_app || 'aplicación no identificada').slice(0, 60), activityDateLocal: date,
+      metrics: values, source: 'telegram_visual_user_report', status: 'reported', recordedAt: recordedAt,
+      evidenceEventId: String(input.evidenceEventId).slice(0, 100) });
+  });
+  if (!saved.length) return { stored: 0, metrics: [], reason: 'NO_VALID_REPORTED_METRICS' };
+  mutateNVRAM(function(state) { saved.forEach(function(metric) {
+    state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function(item) { return !(item && item.data_type === 'reported_activity_metrics' && item.payload && item.payload.reportId === metric.reportId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'reported_activity_metrics', payload: metric });
+  }); }, 'Mem_Ingest_Reported_Activity_Metrics');
+  return { stored: saved.length, metrics: saved, source: 'telegram_visual_user_report' };
+}
+
 /** Obsidian-like view assembled from semantic atoms and their evidence IDs. */
 function Memory_buildEvidenceGraph_(atoms, observations) {
   atoms = Array.isArray(atoms) ? atoms : []; observations = Array.isArray(observations) ? observations : [];
