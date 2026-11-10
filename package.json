@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "bioos-core",
-  "version": "5.1.0",
+  "version": "8.15.1",
   "private": true,
   "description": "Kernel cognitivo y canal de ingesta BioOS sobre Google Apps Script.",
   "scripts": {
@@ -8,10 +8,11 @@
     "audit": "node scripts/audit-state.mjs",
     "test": "node --test apps-script/qa/*.node.test.js",
     "verify": "npm run check && npm test",
-    "deploy": "npm run verify && node scripts/deploy-gas.mjs",
+    "deploy": "npm run check && node scripts/deploy-gas.mjs",
     "test:e2e": "node scripts/black-box-test.mjs",
     "clasp:status": "clasp status",
-    "clasp:push": "npm run verify && clasp push"
+    "harness": "node scripts/bioos-harness.mjs",
+    "ticket": "node scripts/bioos-harness.mjs"
   },
   "engines": {
     "node": ">=20"

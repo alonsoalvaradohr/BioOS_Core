@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="170" viewBox="0 0 900 170" role="img" aria-labelledby="title desc">
+  <title id="title">BioOS Core</title>
+  <desc id="desc">Identidad visual de BioOS Core: cerebro conectado a un pulso y a nodos de datos.</desc>
+  <defs><linearGradient id="g" x1="0" x2="1"><stop stop-color="#2dd4bf"/><stop offset="1" stop-color="#60a5fa"/></linearGradient></defs>
+  <rect width="900" height="170" rx="28" fill="#0b1220"/>
+  <g fill="none" stroke="url(#g)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M99 37c-25 0-42 18-42 42 0 10 4 19 11 26-2 20 11 34 29 34 8 0 16-3 22-9 7 6 15 9 23 9 19 0 31-14 29-34 7-7 11-16 11-26 0-24-18-42-42-42-8 0-15 2-21 7-6-5-13-9-20-9z"/>
+    <path d="M119 48v76M72 83h24l9-16 15 34 12-24 8 13h31"/>
+    <circle cx="59" cy="79" r="5" fill="#2dd4bf"/><circle cx="182" cy="79" r="5" fill="#60a5fa"/>
+  </g>
+  <text x="230" y="84" fill="#f8fafc" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="47" font-weight="700">BioOS Core</text>
+  <text x="233" y="122" fill="#a8b6ca" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="20">Evidence-first personal orchestration</text>
+</svg>

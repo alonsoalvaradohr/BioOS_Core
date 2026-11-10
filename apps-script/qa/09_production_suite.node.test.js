@@ -204,7 +204,7 @@ test('PROD QA TEST 9: Degradación Grácil Google Fit (Aislamiento 403 en Distan
   const res = context.QA_testGracefulDegradationGoogleFitPartialForbidden403();
   assert(res.gracefulDegradationActive === true, 'Graceful degradation inactive');
   assert(res.vitalMetricsPreserved.steps === 13332, 'Steps metric lost');
-  assert(res.vitalMetricsPreserved.rhr === 75, 'RHR metric lost');
+  assert(res.vitalMetricsPreserved.rhr === null, 'Generic heart-rate points must not be misreported as RHR');
   assert(res.vitalMetricsPreserved.calories === 907, 'Calories metric lost');
   assert(res.sensorStatus === 'ONLINE', 'Sensor status must remain ONLINE');
 });

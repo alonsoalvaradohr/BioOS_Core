@@ -1,7 +1,9 @@
 /** Durable NVRAM store: plaintext primary plus two checksummed recovery slots. */
 var MEM_SCHEMA_VERSION = 2;
 var MEM_SLOT_NAMES = { A: 'BioOS_NVRAM.slotA.json', B: 'BioOS_NVRAM.slotB.json' };
-var MEM_LIMITS = { L1_EVENTS: 10, L2_ARCHIVES: 52, L2_DATA_LAKE: 250, MAX_SERIALIZED_BYTES: 4000000 };
+var MEM_LIMITS = { L1_EVENTS: 10, L2_ARCHIVES: 52, L2_DATA_LAKE: 250, SEMANTIC_MEMORIES: 300, MAX_SERIALIZED_BYTES: 4000000 };
+var MEMORY_VECTOR_VERSION = 'bioos-es-hashvec-v1';
+var MEMORY_VECTOR_DIMENSIONS = 96;
 
 // IDs canónicos predeterminados para evitar búsquedas lentas de Drive
 var _DEFAULT_VFS_ROM_ID = '17u0ZOqejUTXbS8CO4DJ8ZttX7umOEIwI';
@@ -77,6 +79,7 @@ function _getVfsNodes() {
 }
 
 function _memClone(v) { return JSON.parse(JSON.stringify(v)); }
+function _memUtf8ByteLength_(text) { return unescape(encodeURIComponent(String(text))).length; }
 /* FNV-1a integrity check; this is not a cryptographic signature. */
 function _memChecksum(text) { var h = 2166136261; for (var i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h += (h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24); } return ('00000000' + (h >>> 0).toString(16)).slice(-8); }
 function _memDefaultState() {
@@ -87,7 +90,9 @@ function _memDefaultState() {
     L3_Semantic: {
       medical_knowledge_graph: { lesiones_activas: [], tendencias_metabolicas: [] },
       evolutionary_weights: { running_intensity_tolerance: 1.0, recovery_speed_factor: 1.0, task_completion_bias: 1.0 },
-      calibration_deltas: []
+      calibration_deltas: [],
+      semantic_memories: [],
+      outcome_ledger: { schemaVersion: 1, records: [] }
     },
     L4_Basal: {
       baseline_rhr: BIOOS_CONFIG.BIOMETRY.BASELINE_RHR || 43,
@@ -123,6 +128,8 @@ function _memMigrateNVRAM(input) {
   if (!s.L3_Semantic.medical_knowledge_graph || typeof s.L3_Semantic.medical_knowledge_graph !== 'object') s.L3_Semantic.medical_knowledge_graph = d.L3_Semantic.medical_knowledge_graph;
   if (!s.L3_Semantic.evolutionary_weights || typeof s.L3_Semantic.evolutionary_weights !== 'object') s.L3_Semantic.evolutionary_weights = d.L3_Semantic.evolutionary_weights;
   if (!Array.isArray(s.L3_Semantic.calibration_deltas)) s.L3_Semantic.calibration_deltas = [];
+  if (!Array.isArray(s.L3_Semantic.semantic_memories)) s.L3_Semantic.semantic_memories = [];
+  if (!s.L3_Semantic.outcome_ledger || !Array.isArray(s.L3_Semantic.outcome_ledger.records)) s.L3_Semantic.outcome_ledger = { schemaVersion: 1, records: [] };
   if (!s.L4_Basal.user_preferences_vector || typeof s.L4_Basal.user_preferences_vector !== 'object') s.L4_Basal.user_preferences_vector = d.L4_Basal.user_preferences_vector;
   if (typeof s.L0_Ingestion_Cursors.last_sync_ms !== 'number') s.L0_Ingestion_Cursors.last_sync_ms = d.L0_Ingestion_Cursors.last_sync_ms;
   s._bioos_memory_schema = MEM_SCHEMA_VERSION; return s;
@@ -145,6 +152,7 @@ function _memApplyHardLimits(s) {
   s.L1_Working.session_events = (s.L1_Working.session_events || []).slice(-MEM_LIMITS.L1_EVENTS).map(function(ev) { return _memSanitizeItem(ev, 500); });
   s.L2_Episodic.weekly_archives = (s.L2_Episodic.weekly_archives || []).slice(-MEM_LIMITS.L2_ARCHIVES);
   s.L2_Episodic.raw_data_lake = (s.L2_Episodic.raw_data_lake || []).slice(-MEM_LIMITS.L2_DATA_LAKE).map(_memCompactLakeItem);
+  s.L3_Semantic.semantic_memories = s.L3_Semantic.semantic_memories.slice(-MEM_LIMITS.SEMANTIC_MEMORIES).map(function(atom) { return _memSanitizeItem(atom, 1600); });
   s.L1_Working.context_anxiety_flag = s.L1_Working.session_events.length >= Math.ceil(MEM_LIMITS.L1_EVENTS * BIOOS_CONFIG.MEMORY_LIMITS.COMPACTION_THRESHOLD_PCT);
   return s;
 }
@@ -152,11 +160,12 @@ function _memApplyHardLimits(s) {
 function _validateNVRAMState(n) {
   var state = _memApplyHardLimits(_memMigrateNVRAM(n));
   var json = JSON.stringify(state);
+  if (_memUtf8ByteLength_(json) > MEM_LIMITS.MAX_SERIALIZED_BYTES) throw new Error('[MEMORY_CAPACITY] NVRAM excede el limite seguro de ' + MEM_LIMITS.MAX_SERIALIZED_BYTES + ' bytes.');
   return { state: state, json: json };
 }
 
 function _memCreateEnvelope(state, generation) { var x = _validateNVRAMState(state); return { format: 'BioOS-NVRAM-Recovery', schemaVersion: MEM_SCHEMA_VERSION, generation: generation, committedAt: new Date().toISOString(), checksum: _memChecksum(x.json), state: x.state }; }
-function _memValidateEnvelope(e) { if (!e || e.format !== 'BioOS-NVRAM-Recovery' || typeof e.generation !== 'number' || !e.state) throw new Error('[VFS_RECOVERY_INVALID] Envelope inválido.'); var x = _validateNVRAMState(e.state); if (_memChecksum(x.json) !== e.checksum) throw new Error('[VFS_RECOVERY_INVALID] Checksum no coincide.'); return { state: x.state, json: x.json, generation: e.generation }; }
+function _memValidateEnvelope(e) { if (!e || e.format !== 'BioOS-NVRAM-Recovery' || typeof e.generation !== 'number' || !e.state) throw new Error('[VFS_RECOVERY_INVALID] Envelope inválido.'); if (_memChecksum(JSON.stringify(e.state)) !== e.checksum) throw new Error('[VFS_RECOVERY_INVALID] Checksum no coincide.'); var x = _validateNVRAMState(e.state); return { state: x.state, json: x.json, generation: e.generation }; }
 function _memFindFile(folder, title) { if (!folder) return null; var fs = folder.searchFiles("title = '" + title + "' and trashed = false"); return fs.hasNext() ? fs.next() : null; }
 function _memWriteSlot(folder, name, envelope) { if (!folder) return envelope; var f = _memFindFile(folder, name) || folder.createFile(name, '', MimeType.PLAIN_TEXT); f.setContent(JSON.stringify(envelope)); return _memValidateEnvelope(JSON.parse(f.getBlob().getDataAsString())); }
 function _memReadSlot(folder, name) { if (!folder) return null; var f = _memFindFile(folder, name); if (!f) return null; try { return _memValidateEnvelope(JSON.parse(f.getBlob().getDataAsString())); } catch (e) { return null; } }
@@ -231,7 +240,7 @@ function mutateNVRAM(mutator, operationName) {
       var envelope = _memCreateEnvelope(draft, gen);
       var next = activeName === 'A' ? 'B' : 'A';
       // Escribir slot de recuperación solo cada 3 mutaciones o para mutaciones de L2/L3 para máxima velocidad
-      var shouldWriteSlot = (gen % 3 === 0) || (operationName && (operationName.includes('DataLake') || operationName.includes('Write_NVRAM')));
+      var shouldWriteSlot = (gen % 3 === 0) || (operationName && (operationName.includes('DataLake') || operationName.includes('Write_NVRAM') || operationName.includes('Semantic') || operationName.includes('Outcome')));
       if (v.folder && shouldWriteSlot) {
         try {
           _memWriteSlot(v.folder, MEM_SLOT_NAMES[next], envelope);
@@ -253,6 +262,291 @@ function mutateNVRAM(mutator, operationName) {
 
 function commitNVRAM(newState) { var replacement = _memClone(newState); mutateNVRAM(function () { return replacement; }, 'Mem_Write_NVRAM'); return true; }
 function ingestWorkingMemory(origin, tokens) { return mutateNVRAM(function (s) { s.L1_Working.session_events.push({ timestamp: new Date().toISOString(), origin: origin, data: tokens }); }, 'Mem_Ingest_L1').L1_Working.context_anxiety_flag; }
+
+/** Spanish-first deterministic feature vector: private, bounded, no external embedding API. */
+function Memory_vectorizeSemanticText(text) {
+  var normalized = Memory_normalizeSemanticText_(text), vector = Array(MEMORY_VECTOR_DIMENSIONS).fill(0);
+  if (!normalized) return { version: MEMORY_VECTOR_VERSION, dimensions: MEMORY_VECTOR_DIMENSIONS, vector: vector };
+  var tokens = normalized.split(' ').filter(function(token) { return token.length > 1 && !Memory_SEMANTIC_STOPWORDS_[token]; });
+  var synonyms = { correr: 'running', carrera: 'running', rodaje: 'running', trotar: 'running', sueño: 'sueno', dormir: 'sueno', descanso: 'sueno', pulso: 'frecuencia_cardiaca', rhr: 'frecuencia_cardiaca', fc: 'frecuencia_cardiaca', reloj: 'wearable', xiaomi: 'wearable', mi: 'wearable', fatiga: 'cansancio', cansancio: 'cansancio', dolor: 'molestia', molestia: 'molestia', lesion: 'molestia', entrenamiento: 'ejercicio', entrenar: 'ejercicio', workout: 'ejercicio', memoria: 'recuerdo', recordar: 'recuerdo' };
+  tokens.forEach(function(token) {
+    var features = [token, synonyms[token] || ''];
+    features.forEach(function(feature, slot) {
+      if (!feature) return;
+      var hash = Memory_hashFeature_(feature), index = hash.index % MEMORY_VECTOR_DIMENSIONS;
+      vector[index] += (hash.negative ? -1 : 1) * (slot ? 0.7 : 1);
+    });
+  });
+  var norm = Math.sqrt(vector.reduce(function(sum, value) { return sum + value * value; }, 0));
+  if (norm) vector = vector.map(function(value) { return Number((value / norm).toFixed(6)); });
+  return { version: MEMORY_VECTOR_VERSION, dimensions: MEMORY_VECTOR_DIMENSIONS, vector: vector };
+}
+
+function Memory_storeSemantic(input) {
+  input = input || {};
+  var text = String(input.text || '').trim().slice(0, 800);
+  if (text.length < 3) return { ok: false, reason: 'EMPTY_MEMORY' };
+  var atom = Memory_createSemanticAtom_(input, text);
+  mutateNVRAM(function(state) { state.L3_Semantic.semantic_memories = Memory_appendSemanticAtoms_(state.L3_Semantic.semantic_memories, [atom]); }, 'Mem_Write_Semantic');
+  return { ok: true, id: atom.id, type: atom.type, expiresAt: atom.expiresAt };
+}
+
+function Memory_createSemanticAtom_(input, text) {
+  var now = Date.now(), type = String(input.type || 'note').slice(0, 32), source = String(input.source || 'user_report').slice(0, 48);
+  var ttl = Math.max(1, Math.min(365, Number(input.ttlDays) || (type === 'plan' ? 14 : type === 'symptom' ? 7 : 180)));
+  var confidence = input.confidence === undefined ? (input.status === 'confirmed' ? 1 : 0.65) : Number(input.confidence);
+  confidence = isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0.5;
+  return {
+    id: String(input.id || ('mem-' + now + '-' + Memory_hashFeature_(text).index.toString(36))),
+    type: type, text: text, source: source, status: String(input.status || 'reported'), confidence: confidence,
+    recordedAt: new Date(now).toISOString(), expiresAt: new Date(now + ttl * 86400000).toISOString(),
+    evidenceIds: Array.isArray(input.evidenceIds) ? input.evidenceIds.map(String).slice(0, 8) : [],
+    vector: Memory_vectorizeSemanticText(text)
+  };
+}
+
+function Memory_appendSemanticAtoms_(memories, additions) {
+  var now = Date.now();
+  memories = memories.filter(function(existing) { return existing && Date.parse(existing.expiresAt) > now; });
+  (additions || []).forEach(function(atom) {
+    memories = memories.filter(function(existing) { return existing && existing.id !== atom.id && String(existing.text).toLowerCase() !== String(atom.text).toLowerCase(); });
+    memories.push(atom);
+  });
+  memories.sort(function(a, b) { return Date.parse(a.recordedAt) - Date.parse(b.recordedAt); });
+  return memories.slice(-MEM_LIMITS.SEMANTIC_MEMORIES);
+}
+
+function Memory_searchSemantic(query, options) {
+  options = options || {};
+  var q = Memory_vectorizeSemanticText(query), now = Date.now(), topK = Math.max(1, Math.min(8, Number(options.topK) || 5));
+  if (!String(query || '').trim()) return [];
+  var atoms = (((getSystemMemory() || {}).NVRAM || {}).L3_Semantic || {}).semantic_memories || [];
+  return atoms.filter(function(atom) { return atom && atom.vector && atom.vector.version === q.version && Date.parse(atom.expiresAt) > now && atom.status !== 'superseded'; })
+    .map(function(atom) { return { atom: atom, score: Memory_cosine_(q.vector, atom.vector.vector) }; })
+    .filter(function(row) { return row.score >= (Number(options.minScore) || 0.12); })
+    .sort(function(a, b) { return b.score - a.score || Date.parse(b.atom.recordedAt) - Date.parse(a.atom.recordedAt); })
+    .slice(0, topK).map(function(row) { return { id: row.atom.id, type: row.atom.type, text: row.atom.text, source: row.atom.source, status: row.atom.status, confidence: row.atom.confidence, recordedAt: row.atom.recordedAt, expiresAt: row.atom.expiresAt, evidenceIds: (row.atom.evidenceIds || []).slice(0, 8), similarity: Number(row.score.toFixed(3)) }; });
+}
+
+/** Exact daily sensor observations stay structured in L2; they are not embedded as prose. */
+function Memory_storeBiometricObservation(telemetry) {
+  if (!telemetry || telemetry.is_live_telemetry !== true || !telemetry.data || !telemetry.window || !telemetry.window.startMs) return { ok: false, reason: 'NO_LIVE_OBSERVATION' };
+  var observationId = 'bio-' + String(telemetry.window.startMs), observation = {
+    observationId: observationId, timestamp: telemetry.fetchedAt || new Date().toISOString(),
+    source: String(telemetry.source || 'unknown'), timeZone: String(telemetry.timeZone || 'unknown'),
+    window: telemetry.window, sleepWindow: telemetry.sleepWindow || null,
+    metrics: { steps: telemetry.data.steps, distanceKm: telemetry.data.distanceKm, caloriesKcal: telemetry.data.caloriesKcal, rhrBpm: telemetry.data.rhrBpm, sleepMinutes: telemetry.data.sleepMinutes }
+  };
+  mutateNVRAM(function(state) {
+    var lake = state.L2_Episodic.raw_data_lake;
+    state.L2_Episodic.raw_data_lake = lake.filter(function(item) { return !(item && item.data_type === 'biometric_daily' && item.payload && item.payload.observationId === observationId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: observation.timestamp, data_type: 'biometric_daily', payload: observation });
+  }, 'Mem_Ingest_Biometric_Daily');
+  return { ok: true, observationId: observationId };
+}
+
+function Memory_listBiometricObservations(options) {
+  var limit = Math.max(1, Math.min(90, Number((options || {}).limit) || 14));
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function(item) { return item && item.data_type === 'biometric_daily' && item.payload && item.payload.observationId; })
+    .slice(-limit).map(function(item) { return item.payload; });
+}
+
+/** Structured L2 archive for sleep session boundaries; timestamps stay queryable rather than embedded as prose. */
+function Memory_storeSleepSessions(history) {
+  if (!history || history.source !== 'google_fit' || !Array.isArray(history.sessions) || !history.sessions.length) return { ok: false, stored: 0, reason: 'NO_SLEEP_SESSIONS' };
+  var recordedAt = history.fetchedAt || new Date().toISOString();
+  var sessions = history.sessions.filter(function (s) { return s && s.startMs > 0 && s.endMs > s.startMs; }).slice(-32).map(function (s) {
+    return { sessionId: String(s.id || (s.startMs + '-' + s.endMs)), startMs: Number(s.startMs), endMs: Number(s.endMs), durationMinutes: Number(s.durationMinutes) || Math.round((s.endMs - s.startMs) / 60000), source: String(s.source || history.source), sourceKind: String(s.sourceKind || 'google_fit_sleep_session'), recordedAt: recordedAt };
+  });
+  if (!sessions.length) return { ok: false, stored: 0, reason: 'NO_VALID_SLEEP_SESSIONS' };
+  mutateNVRAM(function (state) {
+    sessions.forEach(function (session) {
+      state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function (item) { return !(item && item.data_type === 'sleep_session' && item.payload && item.payload.sessionId === session.sessionId); });
+      state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'sleep_session', payload: session });
+    });
+  }, 'Mem_Ingest_Sleep_Sessions');
+  return { ok: true, stored: sessions.length, source: history.source };
+}
+
+function Memory_listSleepSessions(options) {
+  var opts = options || {}, startMs = Number(opts.startMs) || 0, endMs = Number(opts.endMs) || Date.now();
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function (item) {
+    var s = item && item.data_type === 'sleep_session' && item.payload;
+    return s && s.startMs < endMs && s.endMs > startMs;
+  }).map(function (item) { return item.payload; }).sort(function (a, b) { return a.startMs - b.startMs; });
+}
+
+/** Persist verified running session facts and source timestamps in structured episodic memory. */
+function Memory_storeRunningSessions(history) {
+  if (!history || history.source !== 'google_fit' || !Array.isArray(history.sessions)) return { ok: false, stored: 0, reason: 'NO_RUNNING_SESSIONS' };
+  var recordedAt = history.fetchedAt || new Date().toISOString(), sessions = history.sessions.filter(function (s) { return s && Number(s.startMs) > 0 && Number(s.endMs) > Number(s.startMs); }).slice(0, 5).map(function (s) {
+    return { sessionId: String(s.id || s.sessionId), startMs: Number(s.startMs), endMs: Number(s.endMs), activityType: Number(s.activityType), durationMinutes: Number(s.durationMinutes) || null, durationKind: String(s.durationKind || 'wall'), wallMinutes: Number(s.wallMinutes) || null, distanceKm: Number(s.distanceKm) > 0 ? Number(s.distanceKm) : null, source: String(s.source || 'Google Fit'), sourceKind: 'google_fit_running_session', recordedAt: recordedAt };
+  });
+  if (!sessions.length) return { ok: false, stored: 0, reason: 'NO_VALID_RUNNING_SESSIONS' };
+  mutateNVRAM(function (state) { sessions.forEach(function (session) {
+    var previous = state.L2_Episodic.raw_data_lake.filter(function (item) { return item && item.data_type === 'running_session' && item.payload && item.payload.sessionId === session.sessionId; })[0];
+    if (!(session.distanceKm > 0) && previous && Number(previous.payload.distanceKm) > 0) session.distanceKm = Number(previous.payload.distanceKm);
+    state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function (item) { return !(item && item.data_type === 'running_session' && item.payload && item.payload.sessionId === session.sessionId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'running_session', payload: session });
+  }); }, 'Mem_Ingest_Running_Sessions');
+  return { ok: true, stored: sessions.length, source: history.source };
+}
+
+function Memory_listRunningSessions(options) {
+  var opts = options || {}, startMs = Number(opts.startMs) || 0, endMs = Number(opts.endMs) || Date.now(), limit = Math.max(1, Math.min(50, Number(opts.limit) || 10));
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function (item) { var s = item && item.data_type === 'running_session' && item.payload; return s && s.startMs >= startMs && s.startMs <= endMs; }).map(function (item) { return item.payload; }).sort(function (a, b) { return b.startMs - a.startMs; }).slice(0, limit);
+}
+
+/** Store only explicitly visible user-provided workout metrics; never retain the image bytes. */
+function Memory_storeReportedRunningSessions(items, requestContext) {
+  if (!Array.isArray(items) || !items.length) return { stored: 0, sessions: [], reason: 'NO_REPORTED_RUNS' };
+  var ctx = requestContext || {}, recordedAt = new Date().toISOString(), sessions = [];
+  items.slice(0, 5).forEach(function (input, index) {
+    if (!input || typeof input !== 'object') return;
+    if (!String(input.evidenceEventId || '')) return;
+    var distance = Number(input.distance_km), duration = Number(input.duration_seconds);
+    if (!(distance > 0 && distance <= 300 && duration >= 60 && duration <= 172800)) return;
+    var paceShown = Number(input.displayed_avg_pace_seconds_per_km), paceDerived = duration / distance;
+    var date = /^\d{4}-\d{2}-\d{2}$/.test(String(input.activity_date_local || '')) ? String(input.activity_date_local) : '';
+    var time = /^\d{2}:\d{2}$/.test(String(input.activity_time_local || '')) ? String(input.activity_time_local) : '';
+    var reportId = String(input.evidenceEventId).slice(0, 100) + '-' + index;
+    var record = { reportId: reportId, activityDateLocal: date || null, activityTimeLocal: time || null,
+      sourceApp: String(input.source_app || 'aplicación no identificada').slice(0, 60), distanceKm: Number(distance.toFixed(3)), durationSeconds: Math.round(duration),
+      displayedPaceSecondsPerKm: paceShown > 0 && paceShown < 3600 ? Math.round(paceShown) : null,
+      derivedPaceSecondsPerKm: Number(paceDerived.toFixed(1)), paceConsistency: paceShown > 0 && paceShown < 3600 ? (Math.abs(paceShown - paceDerived) / paceDerived <= 0.08 ? 'consistent' : 'mismatch') : 'derived_only',
+      averageHeartRateBpm: Number(input.average_heart_rate_bpm) >= 30 && Number(input.average_heart_rate_bpm) <= 240 ? Number(input.average_heart_rate_bpm) : null,
+      maxHeartRateBpm: Number(input.max_heart_rate_bpm) >= 30 && Number(input.max_heart_rate_bpm) <= 240 ? Number(input.max_heart_rate_bpm) : null,
+      steps: Number(input.steps) > 0 && Number(input.steps) <= 100000 ? Math.round(Number(input.steps)) : null,
+      activeCaloriesKcal: Number(input.active_calories_kcal) > 0 && Number(input.active_calories_kcal) <= 10000 ? Math.round(Number(input.active_calories_kcal)) : null,
+      totalCaloriesKcal: Number(input.total_calories_kcal) > 0 && Number(input.total_calories_kcal) <= 10000 ? Math.round(Number(input.total_calories_kcal)) : null,
+      source: 'telegram_visual_user_report', status: 'reported', recordedAt: recordedAt, evidenceEventId: String(input.evidenceEventId || ctx.eventId || '') };
+    if (date && time && typeof Memory_listRunningSessions === 'function') {
+      var shownAt = Date.parse(date + 'T' + time + ':00-06:00'), localDayStart = Date.parse(date + 'T00:00:00-06:00');
+      var fitRuns = Memory_listRunningSessions({ startMs: localDayStart, endMs: localDayStart + 24 * 60 * 60 * 1000, limit: 20 }).filter(function (run) { return Math.abs(Number(run.startMs) - shownAt) <= 15 * 60 * 1000; });
+      if (fitRuns.length === 1) { record.googleFitSessionId = fitRuns[0].sessionId; record.linkedFitDurationMinutes = Number(fitRuns[0].durationMinutes) || null; record.correlation = 'probable_same_local_start_within_15m'; }
+    }
+    sessions.push(record);
+  });
+  if (!sessions.length) return { stored: 0, sessions: [], reason: 'NO_VALID_REPORTED_RUNS' };
+  mutateNVRAM(function (state) { sessions.forEach(function (session) {
+    state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function (item) { return !(item && item.data_type === 'reported_running_session' && item.payload && item.payload.reportId === session.reportId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'reported_running_session', payload: session });
+  }); }, 'Mem_Ingest_Reported_Running_Sessions');
+  return { stored: sessions.length, sessions: sessions, source: 'telegram_visual_user_report' };
+}
+
+function Memory_listReportedRunningSessions(options) {
+  var opts = options || {}, startMs = Number(opts.startMs) || 0, endMs = Number(opts.endMs) || Date.now(), limit = Math.max(1, Math.min(50, Number(opts.limit) || 10));
+  var startDate = startMs ? Utilities.formatDate(new Date(startMs), 'America/Costa_Rica', 'yyyy-MM-dd') : '0000-00-00';
+  var endDate = Utilities.formatDate(new Date(endMs), 'America/Costa_Rica', 'yyyy-MM-dd');
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function (item) { var r = item && item.data_type === 'reported_running_session' && item.payload; return r && r.activityDateLocal && r.activityDateLocal >= startDate && r.activityDateLocal <= endDate; }).map(function (item) { return item.payload; }).sort(function (a, b) { return String(b.activityDateLocal + (b.activityTimeLocal || '')).localeCompare(String(a.activityDateLocal + (a.activityTimeLocal || ''))); }).slice(0, limit);
+}
+
+/** Store technical metrics visible in a workout image even when no date/distance card is shown. */
+function Memory_storeReportedActivityMetrics(items) {
+  if (!Array.isArray(items) || !items.length) return { stored: 0, metrics: [] };
+  var recordedAt = new Date().toISOString(), saved = [];
+  items.slice(0, 5).forEach(function(input, index) {
+    if (!input || !input.evidenceEventId) return;
+    var cadence = Number(input.cadence_avg_spm), cadenceMax = Number(input.cadence_max_spm);
+    var stride = Number(input.stride_avg_cm), strideMax = Number(input.stride_max_cm);
+    var values = { cadenceAvgSpm: cadence >= 40 && cadence <= 260 ? cadence : null,
+      cadenceMaxSpm: cadenceMax >= 40 && cadenceMax <= 300 ? cadenceMax : null,
+      strideAvgCm: stride >= 20 && stride <= 250 ? stride : null,
+      strideMaxCm: strideMax >= 20 && strideMax <= 300 ? strideMax : null };
+    if (!values.cadenceAvgSpm && !values.cadenceMaxSpm && !values.strideAvgCm && !values.strideMaxCm) return;
+    var date = /^\d{4}-\d{2}-\d{2}$/.test(String(input.activity_date_local || '')) ? String(input.activity_date_local) : null;
+    saved.push({ reportId: String(input.evidenceEventId).slice(0, 100) + '-metrics-' + index,
+      sourceApp: String(input.source_app || 'aplicación no identificada').slice(0, 60), activityDateLocal: date,
+      metrics: values, source: 'telegram_visual_user_report', status: 'reported', recordedAt: recordedAt,
+      evidenceEventId: String(input.evidenceEventId).slice(0, 100) });
+  });
+  if (!saved.length) return { stored: 0, metrics: [], reason: 'NO_VALID_REPORTED_METRICS' };
+  mutateNVRAM(function(state) { saved.forEach(function(metric) {
+    state.L2_Episodic.raw_data_lake = state.L2_Episodic.raw_data_lake.filter(function(item) { return !(item && item.data_type === 'reported_activity_metrics' && item.payload && item.payload.reportId === metric.reportId); });
+    state.L2_Episodic.raw_data_lake.push({ timestamp: recordedAt, data_type: 'reported_activity_metrics', payload: metric });
+  }); }, 'Mem_Ingest_Reported_Activity_Metrics');
+  return { stored: saved.length, metrics: saved, source: 'telegram_visual_user_report' };
+}
+
+/** Read provenance-preserving technical metrics written from Telegram workout images. */
+function Memory_listReportedActivityMetrics(options) {
+  var opts = options || {}, sinceMs = Number(opts.sinceMs) || 0, limit = Math.max(1, Math.min(50, Number(opts.limit) || 20));
+  var lake = ((((getSystemMemory() || {}).NVRAM || {}).L2_Episodic || {}).raw_data_lake || []);
+  return lake.filter(function(item) {
+    var r = item && item.data_type === 'reported_activity_metrics' && item.payload;
+    return r && (!sinceMs || Date.parse(r.recordedAt || item.timestamp || '') >= sinceMs);
+  }).map(function(item) { return item.payload; }).sort(function(a, b) { return Date.parse(b.recordedAt || 0) - Date.parse(a.recordedAt || 0); }).slice(0, limit);
+}
+
+/** Obsidian-like view assembled from semantic atoms and their evidence IDs. */
+function Memory_buildEvidenceGraph_(atoms, observations) {
+  atoms = Array.isArray(atoms) ? atoms : []; observations = Array.isArray(observations) ? observations : [];
+  var observationIds = {};
+  observations.forEach(function(item) { observationIds[item.observationId] = true; });
+  var edges = [];
+  atoms.forEach(function(atom) { (atom.evidenceIds || []).forEach(function(evidenceId) { if (observationIds[evidenceId]) edges.push({ from: atom.id, to: evidenceId, relation: 'reported_with_observation' }); }); });
+  return {
+    nodes: atoms.map(function(atom) { return { id: atom.id, kind: atom.type, text: atom.text, source: atom.source, status: atom.status, evidenceIds: atom.evidenceIds || [] }; }).concat(observations.map(function(item) { return { id: item.observationId, kind: 'biometric_daily', source: item.source, timestamp: item.timestamp, window: item.window, metrics: item.metrics }; })),
+    edges: edges.slice(0, 60)
+  };
+}
+
+function Memory_captureUserFeedback(userNlp, requestContext) {
+  if (!userNlp || typeof userNlp !== 'object') return 0;
+  var groups = [
+    ['symptom', userNlp.sintomatologia_fisica, 7],
+    ['load', userNlp.carga_alostatica_percibida, 7],
+    ['nutrition', userNlp.adherencia_nutricional, 7],
+    ['plan', userNlp.intenciones_futuras, 14]
+  ], saved = 0, evidenceId = String((requestContext || {}).eventId || (requestContext || {}).requestId || ''), additions = [];
+  var linkedEvidence = evidenceId ? [evidenceId] : [];
+  if ((requestContext || {}).observationId) linkedEvidence.push(String(requestContext.observationId));
+  groups.forEach(function(group) { (Array.isArray(group[1]) ? group[1] : []).slice(0, 8).forEach(function(text, index) {
+    if (typeof text !== 'string' || text.trim().length < 3) return;
+    additions.push(Memory_createSemanticAtom_({ id: 'nlp-' + Memory_hashFeature_(evidenceId + ':' + group[0] + ':' + text).index.toString(36), type: group[0], text: text, source: 'telegram_user_nlp', status: 'reported', ttlDays: group[2], evidenceIds: linkedEvidence }, text));
+  }); });
+  if (additions.length) { mutateNVRAM(function(state) { state.L3_Semantic.semantic_memories = Memory_appendSemanticAtoms_(state.L3_Semantic.semantic_memories, additions); }, 'Mem_Write_Semantic'); saved = additions.length; }
+  return saved;
+}
+
+function Memory_listSemantic(options) {
+  options = options || {}; var limit = Math.max(1, Math.min(20, Number(options.limit) || 10)), now = Date.now();
+  var atoms = (((getSystemMemory() || {}).NVRAM || {}).L3_Semantic || {}).semantic_memories || [];
+  return atoms.filter(function(atom) { return atom && Date.parse(atom.expiresAt) > now; }).slice(-limit).reverse().map(function(atom) { return { id: atom.id, type: atom.type, text: atom.text, source: atom.source, status: atom.status, confidence: atom.confidence, recordedAt: atom.recordedAt, expiresAt: atom.expiresAt }; });
+}
+
+function Memory_forgetSemantic(id) {
+  var target = String(id || '').trim(), removed = 0;
+  if (!target) return { ok: false, reason: 'ID_REQUIRED' };
+  mutateNVRAM(function(state) { var before = state.L3_Semantic.semantic_memories.length; state.L3_Semantic.semantic_memories = state.L3_Semantic.semantic_memories.filter(function(atom) { return atom.id !== target; }); removed = before - state.L3_Semantic.semantic_memories.length; }, 'Mem_Write_Semantic');
+  return { ok: removed > 0, removed: removed };
+}
+
+function Memory_recordUserOutcome(text, status, requestId) {
+  var description = String(text || '').trim().slice(0, MEMORY_OUTCOME_LEDGER_MAX_TEXT_LENGTH);
+  if (description.length < 3) return { ok: false, error: { code: 'OUTCOME_TEXT_REQUIRED' } };
+  var id = 'outcome-' + Date.now() + '-' + Memory_hashFeature_(description).index.toString(36);
+  var input = { outcomeId: id, decisionId: String(requestId || id), actionId: 'user-confirmed-session', status: String(status || 'COMPLETED').toUpperCase(), occurredAt: new Date().toISOString(), provenance: { source: 'telegram_explicit_user_confirmation', requestId: String(requestId || id), agentIds: ['user'], evidenceIds: [] }, assessment: { observedOutcome: description, utility: null, safetySignals: [] } };
+  var prepared = Memory_prepareOutcomeRecord(input, {}, Date.now());
+  if (!prepared.ok) return prepared;
+  var appended = null;
+  mutateNVRAM(function(state) {
+    appended = Memory_appendOutcomeLedger(state.L3_Semantic.outcome_ledger, input, {}, Date.now());
+    if (!appended.ok) throw new Error('[OUTCOME_LEDGER] ' + appended.error.code);
+    state.L3_Semantic.outcome_ledger = appended.value;
+  }, 'Mem_Write_Outcome_Ledger');
+  return { ok: true, outcomeId: id, status: prepared.value.status, expiresAt: prepared.value.expiresAt };
+}
+
+var Memory_SEMANTIC_STOPWORDS_ = { de:1, la:1, el:1, los:1, las:1, un:1, una:1, y:1, o:1, en:1, con:1, para:1, por:1, que:1, es:1, mi:0, me:1, se:1, del:1, al:1, hoy:1, ayer:1, the:1, and:1, to:1, of:1, is:1 };
+function Memory_normalizeSemanticText_(text) { return String(text || '').toLowerCase().normalize ? String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_ ]/g, ' ').replace(/\s+/g, ' ').trim() : String(text || '').toLowerCase().replace(/[^a-z0-9_ ]/g, ' ').replace(/\s+/g, ' ').trim(); }
+function Memory_hashFeature_(text) { var h = 2166136261, s = String(text); for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } h >>>= 0; return { index: h, negative: (h & 1) === 1 }; }
+function Memory_cosine_(a, b) { if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0; var dot = 0; for (var i = 0; i < a.length; i++) dot += Number(a[i] || 0) * Number(b[i] || 0); return dot; }
 function ingestToDataLake(dataType, rawPayload) { mutateNVRAM(function (s) { s.L2_Episodic.raw_data_lake.push({ timestamp: new Date().toISOString(), data_type: dataType, payload: rawPayload }); }, 'Mem_Ingest_DataLake'); return true; }
 function getIngestionCursor() { return getSystemMemory().NVRAM.L0_Ingestion_Cursors.last_sync_ms; }
 function updateIngestionCursor(ms) { mutateNVRAM(function (s) { s.L0_Ingestion_Cursors.last_sync_ms = ms; }, 'Mem_Write_Cursor'); return true; }

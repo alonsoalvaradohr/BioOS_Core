@@ -194,8 +194,8 @@ function installCronobiologicalTriggers() {
 }
 
 /**
- * Reconcilia de manera estrictamente idempotente los 4 disparadores del reloj cronobiológico.
- * Purgará cualquier trigger huérfano o repetido y garantizará exactamente 1 instancia de cada handler canónico.
+ * Reconcilia los dos briefings diarios. Las auditorías semanal y mensual quedan
+ * desprogramadas hasta que existan outcomes de entrenamiento confirmados.
  */
 function reconcileCronobiologicalTriggers() {
   return executeWithResilience("Reconcile_Cron_Triggers", () => {
@@ -204,9 +204,7 @@ function reconcileCronobiologicalTriggers() {
 
     const canonicalTargets = {
       triggerMorningBriefing: { type: 'daily', hour: 4 },
-      triggerEveningBriefing: { type: 'daily', hour: 19 },
-      triggerWeeklyAudit: { type: 'weekly', hour: 18, day: ScriptApp.WeekDay.SUNDAY },
-      triggerMonthlyMetaEvolution: { type: 'monthly', hour: 2, monthDay: 1 }
+      triggerEveningBriefing: { type: 'daily', hour: 19 }
     };
 
     // 1. Auditar y purgar disparadores huérfanos o duplicados

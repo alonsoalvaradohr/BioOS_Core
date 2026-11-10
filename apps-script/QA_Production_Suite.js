@@ -365,8 +365,8 @@ function QA_testMultiFailureEdgeCaseReal() {
 function QA_testGracefulDegradationGoogleFitPartialForbidden403() {
   if (typeof Sensor_GoogleFit_normalizeAggregate_ !== 'function') throw new Error('Sensor_GoogleFit_normalizeAggregate_ no disponible');
 
-  // Simulación de respuesta agregada donde 'activity' y 'heart_rate' tuvieron éxito
-  // pero 'distance' falló con 403 Forbidden
+  // Simulación de actividad y pulso de ejercicio con distancia denegada. Un punto
+  // genérico heart_rate.bpm no acredita frecuencia cardíaca en reposo (RHR).
   const mockActivityPayload = {
     bucket: [
       {
@@ -392,7 +392,7 @@ function QA_testGracefulDegradationGoogleFitPartialForbidden403() {
 
   if (normalized.steps !== 13332) throw new Error(`Pasos no extraídos: ${normalized.steps}`);
   if (normalized.caloriesKcal !== 907) throw new Error(`Calorías no calculadas: ${normalized.caloriesKcal}`);
-  if (normalized.rhrBpm !== 75) throw new Error(`RHR no extraído: ${normalized.rhrBpm}`);
+  if (normalized.rhrBpm !== null) throw new Error(`Un pulso genérico no debe etiquetarse como RHR: ${normalized.rhrBpm}`);
   if (normalized.distanceKm !== null) throw new Error(`Distancia prohibida debió ser null: ${normalized.distanceKm}`);
 
   // Simulación del Orquestador consumiendo esta telemetría parcial

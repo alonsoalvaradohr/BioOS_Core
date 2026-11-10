@@ -107,9 +107,20 @@ function compileQualitativeFeedback(rawInput) {
           "type": "ARRAY",
           "items": { "type": "STRING" },
           "description": "Planes operativos o compromisos del usuario para inyectar en Google Tasks."
-        }
+        },
+        "activity_metrics": { "type": "ARRAY", "items": { "type": "OBJECT", "properties": {
+          "source_app": { "type": "STRING" }, "activity_date_local": { "type": "STRING" },
+          "cadence_avg_spm": { "type": "NUMBER" }, "cadence_max_spm": { "type": "NUMBER" },
+          "stride_avg_cm": { "type": "NUMBER" }, "stride_max_cm": { "type": "NUMBER" }
+        }, "required": ["source_app", "activity_date_local", "cadence_avg_spm", "cadence_max_spm", "stride_avg_cm", "stride_max_cm"] }, "description": "Métricas técnicas de carrera legibles en captura; independientes de que distancia/tiempo estén visibles." },
+        "activity_sessions": { "type": "ARRAY", "items": { "type": "OBJECT", "properties": {
+          "source_app": { "type": "STRING" }, "activity_date_local": { "type": "STRING" }, "activity_time_local": { "type": "STRING" },
+          "distance_km": { "type": "NUMBER" }, "duration_seconds": { "type": "NUMBER" }, "displayed_avg_pace_seconds_per_km": { "type": "NUMBER" },
+          "average_heart_rate_bpm": { "type": "NUMBER" }, "max_heart_rate_bpm": { "type": "NUMBER" }, "steps": { "type": "NUMBER" },
+          "active_calories_kcal": { "type": "NUMBER" }, "total_calories_kcal": { "type": "NUMBER" }
+        }, "required": ["source_app", "activity_date_local", "activity_time_local", "distance_km", "duration_seconds", "displayed_avg_pace_seconds_per_km", "average_heart_rate_bpm", "max_heart_rate_bpm", "steps", "active_calories_kcal", "total_calories_kcal"] }, "description": "Solo reportes de ejercicio visibles en imágenes; usa 0 o cadena vacía para dato ausente/ilegible." }
       },
-      "required": ["sintomatologia_fisica", "carga_alostatica_percibida", "adherencia_nutricional", "intenciones_futuras"]
+      "required": ["sintomatologia_fisica", "carga_alostatica_percibida", "adherencia_nutricional", "intenciones_futuras", "activity_metrics", "activity_sessions"]
     };
 
     const prompt = `Eres el Agente Compilador Multimodal de BioOS v5.2 (Audio, Imagen, Texto).
@@ -117,7 +128,9 @@ Analiza las entradas (notas de voz, fotos de alimentos, texto) y extrae:
 1. "sintomatologia_fisica": Molestias musculares, articulares o fatiga.
 2. "carga_alostatica_percibida": Nivel de estrés mental o cognitivo.
 3. "adherencia_nutricional": Alimentos detectados en texto o fotografiados, con estimación de calorías y desglose de macros (Proteínas, Carbohidratos, Grasas).
-4. "intenciones_futuras": Compromisos, tareas a realizar o sesiones de running planeadas.`;
+4. "intenciones_futuras": Compromisos, tareas a realizar o sesiones de running planeadas.
+5. "activity_metrics": extrae por separado cadencia media/máxima y zancada media/máxima si aparecen, incluso si la captura es solo un panel técnico sin fecha/distancia. Usa 0 si el dato no aparece; no confundas SPM con pasos por pierna.
+6. "activity_sessions": solo cuando una imagen muestre claramente una actividad deportiva; copia los números legibles y el origen visible, usa 0/cadena vacía para cualquier campo ilegible o ausente. No adivines fecha, distancia, ritmo ni frecuencia cardíaca y no conviertas pasos/calorías en distancia. El tiempo y ritmo mostrados son del usuario/app, no telemetría directa de Google Fit.`;
 
     let userPayloadParam;
 
@@ -154,7 +167,22 @@ Analiza las entradas (notas de voz, fotos de alimentos, texto) y extrae:
       sendSystemTelemetry("PROCESS", `[MOMA] Procesando inferencia multimodal (${isVoice ? 'Audio ' : ''}${isPhoto ? 'Foto ' : ''})...`);
     }
 
-    const compiledData = invokeUniversalLLM(prompt, userPayloadParam, schema, 0.1);
+    let compiledData = null, analysisErrorCode = '';
+    try { compiledData = invokeUniversalLLM(prompt, userPayloadParam, schema, 0.1); }
+    catch (error) { analysisErrorCode = (typeof Core_normalizeError === 'function' ? Core_normalizeError(error).code : 'VISION_INFERENCE_FAILED'); }
+    if (!compiledData || typeof compiledData !== 'object') compiledData = { sintomatologia_fisica: [], carga_alostatica_percibida: [], adherencia_nutricional: [], intenciones_futuras: [], activity_metrics: [], activity_sessions: [] };
+    compiledData.activity_metrics = Array.isArray(compiledData.activity_metrics) ? compiledData.activity_metrics : [];
+    compiledData.activity_sessions = Array.isArray(compiledData.activity_sessions) ? compiledData.activity_sessions : [];
+    compiledData.photo_analysis_status = isPhoto ? (analysisErrorCode ? 'inference_unavailable:' + analysisErrorCode : (compiledData.activity_metrics.length || compiledData.activity_sessions.length ? 'activity_evidence_extracted' : 'no_activity_metrics_extracted')) : 'no_photo';
+    if (compiledData && typeof compiledData === 'object') {
+      var photoEvents = ingressItems.filter(function(item) { return item && item.kind === 'photo'; }).map(function(item) { return String(item.eventId || ''); });
+      (Array.isArray(compiledData.activity_sessions) ? compiledData.activity_sessions : []).forEach(function(session, index) {
+        if (session && typeof session === 'object') session.evidenceEventId = photoEvents[Math.min(index, Math.max(0, photoEvents.length - 1))] || '';
+      });
+      (Array.isArray(compiledData.activity_metrics) ? compiledData.activity_metrics : []).forEach(function(metrics, index) {
+        if (metrics && typeof metrics === 'object') metrics.evidenceEventId = photoEvents[Math.min(index, Math.max(0, photoEvents.length - 1))] || '';
+      });
+    }
 
     if (typeof sendSystemTelemetry === "function") {
       const intentionsCount = compiledData.intenciones_futuras ? compiledData.intenciones_futuras.length : 0;

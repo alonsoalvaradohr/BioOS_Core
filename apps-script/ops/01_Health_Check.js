@@ -113,28 +113,15 @@ function _opsCheckDatabase_() {
       const files = DriveApp.searchFiles("title = 'BioOS_Database' and trashed = false");
       if (!files.hasNext()) return _opsResult_('database', 'FAIL', 'BioOS_Database no encontrada en Drive.');
       spreadsheet = SpreadsheetApp.openById(files.next().getId());
-      props.setProperty('BIOOS_DB_ID', spreadsheet.getId());
     }
 
-    let queue = spreadsheet.getSheetByName('Queue_NLP');
+    const queue = spreadsheet.getSheetByName('Queue_NLP');
     const expected = ['RECEIVED_AT','JOB_ID','IDEMPOTENCY_KEY','STATUS','ATTEMPTS','LEASE_UNTIL','MESSAGE','METADATA_JSON','LAST_ERROR'];
-    if (!queue) {
-      queue = spreadsheet.insertSheet('Queue_NLP');
-      queue.getRange(1, 1, 1, expected.length).setValues([expected]);
-      queue.setFrozenRows(1);
-    } else {
-      const width = Math.max(2, queue.getLastColumn());
-      const headers = queue.getLastRow() ? queue.getRange(1, 1, 1, width).getValues()[0].slice(0, expected.length) : [];
-      const current = expected.every(function(value, index) { return headers[index] === value; });
-      if (!current) {
-        if (typeof _repoMigrateQueueSheet_ === 'function') {
-          _repoMigrateQueueSheet_(queue);
-        } else {
-          queue.getRange(1, 1, 1, expected.length).setValues([expected]);
-          queue.setFrozenRows(1);
-        }
-      }
-    }
+    if (!queue) return _opsResult_('database', 'WARN', 'Queue_NLP no existe; el health check no la crea.');
+    const width = Math.max(2, queue.getLastColumn());
+    const headers = queue.getLastRow() ? queue.getRange(1, 1, 1, width).getValues()[0].slice(0, expected.length) : [];
+    const current = expected.every(function(value, index) { return headers[index] === value; });
+    if (!current) return _opsResult_('database', 'WARN', 'Encabezados Queue_NLP requieren migración explícita; el health check no los modifica.');
 
     return _opsResult_('database', 'PASS', 'Repositorio y esquema durable de cola disponibles.', { spreadsheetId: spreadsheet.getId(), queueRows: Math.max(0, queue.getLastRow() - 1) });
   } catch (error) {
@@ -144,9 +131,14 @@ function _opsCheckDatabase_() {
 
 function _opsCheckSensors_() {
   const props = PropertiesService.getScriptProperties();
-  const mobvoiReady = !!(props.getProperty('MOBVOI_API_ENDPOINT') && props.getProperty('MOBVOI_API_TOKEN'));
-  if (mobvoiReady) return _opsResult_('sensors', 'PASS', 'Proveedor Mobvoi primario configurado; Google Fit queda como fallback.');
-  return _opsResult_('sensors', 'WARN', 'Mobvoi primario no está configurado; operación biométrica degradada al fallback de Google Fit.', { primary: 'unavailable', fallback: 'google-fit' });
+  const provider = String(props.getProperty('BIOOS_SENSOR_PROVIDER') || 'google_fit_legacy').trim().toLowerCase();
+  if (provider === 'health_connect') return _opsResult_('sensors', 'WARN', 'Health Connect directo no tiene puente; BioOS intenta Google Fit REST como ruta de compatibilidad y /doctor valida si entrega datos.', { provider: provider, fallbackProvider: 'google_fit_legacy', ready: false });
+  if (provider === 'mobvoi') {
+    const configured = !!(props.getProperty('MOBVOI_API_ENDPOINT') && props.getProperty('MOBVOI_API_TOKEN'));
+    return _opsResult_('sensors', configured ? 'PASS' : 'FAIL', configured ? 'Proveedor Mobvoi configurado de forma explicita.' : 'Mobvoi seleccionado, pero faltan sus credenciales.', { provider: provider, ready: configured });
+  }
+  if (provider === 'google_fit_legacy') return _opsResult_('sensors', 'WARN', 'Google Fit REST esta seleccionado como ruta de compatibilidad; ejecute /doctor para validar OAuth y datos recientes. La API esta en retirada durante 2026.', { provider: provider, ready: false });
+  return _opsResult_('sensors', 'FAIL', 'BIOOS_SENSOR_PROVIDER no es compatible.', { provider: provider, ready: false });
 }
 
 function _opsCheckTriggers_() {

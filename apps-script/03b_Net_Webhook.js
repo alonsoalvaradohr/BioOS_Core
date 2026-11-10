@@ -360,6 +360,15 @@ function _netTelemetry_(context, severity, message, fields) {
   if (typeof sendSystemTelemetry === 'function') return sendSystemTelemetry(severity, message, fields);
 }
 
+/** Check exactly the Google Fit read scope required for distance, without widening OAuth access. */
+function _bioosGoogleFitLocationAuthorization_() {
+  try {
+    var scope = 'https://www.googleapis.com/auth/fitness.location.read';
+    var info = ScriptApp.getAuthorizationInfo(ScriptApp.AuthMode.FULL, [scope]);
+    return { status: String(info.getAuthorizationStatus()), url: info.getAuthorizationUrl() || null };
+  } catch (error) { return { status: 'UNAVAILABLE', reason: String(error && error.message || error).slice(0, 100) }; }
+}
+
 function _handleBypassCommand(command, sourceChatId) {
   try {
     const rawCmd = String(command || '').trim();
@@ -380,32 +389,80 @@ function _handleBypassCommand(command, sourceChatId) {
       _diagnoseSensorsLive_(sourceChatId);
       return;
     }
+    if (normalizedCommand === "/syncfit" || normalizedCommand === "/fitarchive") {
+      const arg = rawCmd.split(/\s+/)[1] || '';
+      if (arg.toLowerCase() === 'status') {
+        const status = Sensor_GoogleFit_archiveStatus_(), job = status.job, c = status.catalog;
+        const text = '<b>Archivo histórico Google Fit · Drive</b>\nEstado: ' + _orchestratorEscapeHtml_((job && job.status) || (c.lastSync && c.lastSync.status) || 'NO INICIADO') +
+          '\nFuentes catalogadas: ' + c.sourceCount + ' · shards: ' + c.shardCount + ' · puntos copiados: ' + c.pointCount +
+          (job ? '\nFuentes terminadas: ' + Math.min(job.sourceIndex, job.sourceCount) + '/' + job.sourceCount + ' · páginas leídas: ' + job.pagesProcessed + ' · fuente actual: ' + _orchestratorEscapeHtml_(job.currentDataType || 'pendiente') +
+            '\nÚltimo intento: ' + (job.lastAttemptAt || 'aún no iniciado') + ' · último avance: ' + (job.lastProgressAt || 'aún no hay página confirmada') +
+            '\nWorker programado: ' + (status.workerScheduled ? 'sí' : 'no') + ' · ventana ' + job.since.slice(0, 10) + ' → ' + job.until.slice(0, 10) : '') +
+          '\nHuecos/permisos: ' + ((c.lastSync && c.lastSync.gaps) ? c.lastSync.gaps.length : 0) + '. Usa <code>/syncfit</code> para iniciar o reanudar; <code>/syncfit pausa</code> para pausar.';
+        if (typeof _rawSystemNotify === 'function') _rawSystemNotify(text, sourceChatId);
+        return;
+      }
+      if (/^(pausa|pause)$/i.test(arg)) {
+        const paused = Sensor_GoogleFit_pauseArchiveSync_();
+        if (typeof _rawSystemNotify === 'function') _rawSystemNotify(paused.ok ? 'Archivo pausado. El cursor y los shards confirmados se conservan; ejecuta <code>/syncfit</code> para reanudar.' : 'No se pudo pausar el archivo.', sourceChatId);
+        return;
+      }
+      const days = /^\d{1,5}$/.test(arg) ? Number(arg) : undefined;
+      const started = Sensor_GoogleFit_beginArchiveSync_({ days: days, chatId: sourceChatId, mode: 'backfill' });
+      const msg = started.ok
+        ? (started.alreadyRunning ? 'El backfill ya está activo.' : 'Inicié la copia histórica de solo lectura desde 2014 o la ventana elegida. Los puntos originales se comprimen y archivan en Drive BioOS; el proceso es reanudable. Usa <code>/syncfit status</code> para progreso.')
+        : 'No inicié la copia. Motivo: <code>' + _orchestratorEscapeHtml_(started.reason || 'FIT_ARCHIVE_START_FAILED') + '</code>. No se modificó Google Fit.';
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(msg, sourceChatId);
+      return;
+    }
     if (normalizedCommand === "/reauth" || normalizedCommand === "/auth") {
-      const serviceUrl = (typeof ScriptApp !== 'undefined' && ScriptApp.getService && ScriptApp.getService().getUrl()) || '';
-      const authUrl = serviceUrl ? (serviceUrl + (serviceUrl.includes('?') ? '&' : '?') + 'action=reauth') : 'https://script.google.com/home';
-      const authMsg = "🔐 <b>[BIOOS PROTOCOLO DE RE-AUTENTICACIÓN OAUTH2]</b>\n\n" +
-                      "Se han inyectado nuevos permisos de Google Fit (Ubicación, Distancia, Calorías y Sensores).\n\n" +
-                      "👉 <b>Enlace de Re-Autorización:</b>\n" +
-                      '<a href="' + authUrl + '">🔗 TOCAR AQUÍ PARA AUTORIZAR GOOGLE FIT</a>\n\n' +
-                      "<i>Si Google muestra 'Aplicación no verificada', toca 'Avanzado' -> 'Ir a BioOS (no seguro)' -> 'Permitir'.\n" +
-                      "Una vez completado, invoca /doctor para validar la telemetría viva.</i>";
+      const auth = _bioosGoogleFitLocationAuthorization_();
+      let authMsg = '<b>Acceso de distancia Google Fit</b>\nScope mínimo consultado: <code>fitness.location.read</code>; BioOS no solicitará permisos adicionales.';
+      if (auth.status === 'REQUIRED' && auth.url && /^https:\/\/(?:accounts|script)\.google\.com\//i.test(auth.url)) authMsg += '\nLa autorización de este scope falta. Abre este enlace con la cuenta que ejecuta el Apps Script y acepta el permiso:\n' + auth.url;
+      else if (auth.status === 'NOT_REQUIRED') authMsg += '\nApps Script informa que el scope ya está autorizado. Repetir OAuth no resolvería por sí solo el 403; falta revisar acceso de Google Fit a los datos de distancia del origen Mi Fitness. Ejecuta /doctor después de revisar ese acceso.';
+      else authMsg += '\nNo pude obtener el estado OAuth (' + _orchestratorEscapeHtml_(auth.status) + '). Ejecuta /doctor y revisa el Apps Script propietario.';
       if (typeof _rawSystemNotify === "function") _rawSystemNotify(authMsg, sourceChatId);
       return;
     }
+    if (normalizedCommand === "/recordar" || normalizedCommand === "/remember") {
+      const text = rawCmd.replace(/^\/\w+(?:@[^\s]+)?\s*/, '').trim();
+      if (text.length < 3) { if (typeof _rawSystemNotify === 'function') _rawSystemNotify('Uso: <code>/recordar texto que BioOS debe conservar</code>', sourceChatId); return; }
+      const saved = Memory_storeSemantic({ text: text, type: 'user_note', source: 'telegram_explicit', status: 'confirmed', ttlDays: 365 });
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(saved.ok ? 'Recuerdo guardado. ID: <code>' + saved.id + '</code>\nCaduca: ' + saved.expiresAt : 'No pude guardar el recuerdo.', sourceChatId);
+      return;
+    }
+    if (normalizedCommand === "/olvidar" || normalizedCommand === "/forget") {
+      const id = rawCmd.replace(/^\/\w+(?:@[^\s]+)?\s*/, '').trim();
+      const forgotten = Memory_forgetSemantic(id);
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(forgotten.removed ? 'Recuerdo eliminado: <code>' + id + '</code>' : 'No encontré ese ID. Usa /memoria para consultar los recuerdos activos.', sourceChatId);
+      return;
+    }
+    if (normalizedCommand === "/resultado") {
+      const text = rawCmd.replace(/^\/\w+(?:@[^\s]+)?\s*/, '').trim();
+      const result = Memory_recordUserOutcome(text, 'COMPLETED', 'telegram-' + Date.now());
+      if (typeof _rawSystemNotify === 'function') _rawSystemNotify(result.ok ? 'Resultado guardado como sesión confirmada por ti. ID: <code>' + result.outcomeId + '</code>' : 'Uso: <code>/resultado descripción de la sesión realizada</code>', sourceChatId);
+      return;
+    }
     if (normalizedCommand === "/ping") {
-      const pongMsg = "📡 <b>Pong.</b> Túnel seguro activo. Exocórtex BioOS v7.1 en línea.";
+      const version = typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : 'unknown';
+      const pongMsg = 'Pong. Tunel activo. BioOS ' + version + ' en linea.';
       if (typeof _rawSystemNotify === "function" && !_rawSystemNotify(pongMsg, sourceChatId)) {
         throw new Error('[COMMAND_NOTIFY_FAILED] No fue posible enviar /ping.');
       }
       return;
     }
     if (normalizedCommand === "/ayuda" || normalizedCommand === "/help") {
-      const helpMsg = "🧠 <b>BioOS Exocórtex v7.1 - Comandos Disponibles:</b>\n\n" +
-                      "• <code>/estado</code> o <code>/memoria</code> - Dashboard ejecutivo de telemetría, biometría y NVRAM.\n" +
-                      "• <code>/doctor</code> - Diagnóstico en vivo y granular de Google Fit y sensores de hardware.\n" +
-                      "• <code>/reauth</code> - Renovar y autorizar scopes de Google Fit y Ubicación.\n" +
-                      "• <code>/ping</code> - Comprobar latencia y conectividad del túnel.\n" +
-                      "• <i>Envío directo:</i> Notas de Voz, Imágenes o Texto para inferencia activa.";
+      const version = typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : 'unknown';
+      const helpMsg = '<b>BioOS ' + version + ' - Comandos</b>\n\n' +
+                      '<code>/estado</code> - Telemetria disponible y memoria reciente.\n' +
+                      '<code>/doctor</code> - Estado de sensores, valores y fuente.\n' +
+                      '<code>/syncfit</code> - Copia reanudable del historial Google Fit a Drive; <code>/syncfit status</code> muestra cobertura, <code>/syncfit pausa</code> pausa.\n' +
+                      '<code>/reauth</code> - Ayuda de autenticación; /doctor consulta la ruta en vivo.\n' +
+                      '<code>/recordar texto</code> - Guarda un recuerdo duradero.\n' +
+                      '<code>/olvidar ID</code> - Elimina un recuerdo guardado.\n' +
+                      '<code>/resultado sesión</code> - Registra un resultado de entrenamiento confirmado.\n' +
+                      '<code>/ping</code> - Conectividad del tunel.\n' +
+                      'Puedes enviar texto, notas de voz o imagenes.';
       if (typeof _rawSystemNotify === "function") _rawSystemNotify(helpMsg, sourceChatId);
       return;
     }
@@ -423,68 +480,48 @@ function _handleBypassCommand(command, sourceChatId) {
  * Se salta la NVRAM y realiza un fetch desacoplado a los endpoints para auditar tokens y degradación grácil.
  */
 function _diagnoseSensorsLive_(sourceChatId) {
-  const reportLines = [];
-  reportLines.push('🩺 <b>[BIOOS SRE DOCTOR: DIAGNÓSTICO EN VIVO DE SENSORES]</b>\n');
-
-  try {
-    const token = typeof ScriptApp !== 'undefined' ? ScriptApp.getOAuthToken() : null;
-    reportLines.push('🔑 <b>1. OAuth Token Apps Script:</b> ' + (token ? '🟢 Generado (' + token.substring(0, 8) + '...)' : '🔴 NO DISPONIBLE'));
-  } catch (tokErr) {
-    reportLines.push('🔑 <b>1. OAuth Token Apps Script:</b> 🔴 ' + tokErr.message);
-  }
-
-  // 1. Sensor Engine Master Probe (Degradación Grácil Granular)
+  const lines = ['<b>BioOS - Estado de sensores</b>'];
   try {
     const snap = typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot() : null;
     const data = (snap && snap.data) || {};
-    const meta = (snap && snap.metadata) || {};
-    const report = meta.telemetryReport || {};
-
-    reportLines.push('\n📡 <b>2. Google Fit API Status (Aislamiento Granular):</b> ' + ((snap && snap.available) ? '🟢 ONLINE' : '🟡 PARCIAL / NOMINAL'));
-    reportLines.push('• <b>Actividad (Pasos/Calorías):</b> ' + (report.activity && report.activity.ok ? '🟢 HTTP 200 OK' : '🟡 ' + ((report.activity && report.activity.httpStatus) || 'OK')));
-    reportLines.push('• <b>Frecuencia Cardíaca (RHR):</b> ' + (report.heart_rate && report.heart_rate.ok ? '🟢 HTTP 200 OK' : '🟡 ' + ((report.heart_rate && report.heart_rate.httpStatus) || 'OK')));
-    reportLines.push('• <b>Monitor de Sueño (Sleep):</b> ' + (report.sleep && report.sleep.ok ? '🟢 HTTP 200 OK' : '🟡 ' + ((report.sleep && report.sleep.httpStatus) || 'OK')));
-    reportLines.push('• <b>Ubicación (Distancia GPS):</b> ' + (report.location && report.location.ok ? '🟢 HTTP 200 OK' : '🟡 HTTP ' + ((report.location && report.location.httpStatus) || '403') + ' (Usa /reauth para habilitar)'));
-
-    reportLines.push('\n📊 <b>Métricas Extraídas en Vivo:</b>');
-    reportLines.push('• <b>Pasos:</b> <code>' + (data.steps !== null ? Number(data.steps).toLocaleString() : '0 / Sin datos') + '</code>');
-    reportLines.push('• <b>Distancia:</b> <code>' + (data.distanceKm !== null ? data.distanceKm + ' km' : 'Sin permiso location.read') + '</code>');
-    reportLines.push('• <b>Calorías:</b> <code>' + (data.caloriesKcal !== null ? data.caloriesKcal + ' kcal' : '0 kcal') + '</code>');
-    reportLines.push('• <b>RHR:</b> <code>' + (data.rhrBpm !== null ? data.rhrBpm + ' bpm' : 'Sin lectura') + '</code>');
-    reportLines.push('• <b>Sueño:</b> <code>' + (data.sleepMinutes !== null ? (data.sleepMinutes / 60).toFixed(1) + 'h' : 'Sin lectura') + '</code>');
-
-    if (report.location && !report.location.ok) {
-      reportLines.push('\n💡 <i>Nota SRE: Si distancia muestra HTTP 403, ejecuta /reauth para aceptar los nuevos permisos en Google.</i>');
+    lines.push('Fuente activa: ' + ((snap && snap.source) || 'ninguna'));
+    lines.push('Lectura consultada: ' + ((snap && snap.fetchedAt) || 'sin marca de tiempo'));
+    lines.push('Estado del proveedor: ' + ((snap && snap.available) ? 'consulta disponible' : ((snap && snap.reason) || 'sin datos')));
+    if (snap && snap.metadata && snap.metadata.dailyWindow) {
+      lines.push('Ventana pasos/energía/distancia (UTC): ' + new Date(snap.metadata.dailyWindow.startMs).toISOString() + ' - ' + new Date(snap.metadata.dailyWindow.endMs).toISOString());
     }
-  } catch (snapErr) {
-    reportLines.push('📡 <b>2. Google Fit API Crash:</b> 🔴 ' + snapErr.message);
+    if (snap && snap.metadata && snap.metadata.sleepWindow) {
+      lines.push('Ventana sueño (UTC): ' + new Date(snap.metadata.sleepWindow.startMs).toISOString() + ' - ' + new Date(snap.metadata.sleepWindow.endMs).toISOString());
+    }
+    if (snap && snap.metadata && snap.metadata.cacheHit) lines.push('Instantánea reutilizada, antigüedad: ' + Math.round(snap.metadata.cacheAgeMs / 1000) + ' s');
+    lines.push('Pasos: ' + (data.steps === null || data.steps === undefined ? 'sin dato' : Number(data.steps).toLocaleString()));
+    lines.push('Distancia: ' + (data.distanceKm === null || data.distanceKm === undefined || data.distanceKm <= 0 ? 'sin dato' : data.distanceKm + ' km'));
+    lines.push('Calorías totales Google Fit (incluyen gasto en reposo): ' + (data.caloriesKcal === null || data.caloriesKcal === undefined ? 'sin dato' : data.caloriesKcal + ' kcal'));
+    lines.push('Frecuencia card?aca en reposo: ' + (data.rhrBpm === null || data.rhrBpm === undefined ? 'sin dato v?lido' : data.rhrBpm + ' bpm'));
+    lines.push('Sue?o: ' + (data.sleepMinutes === null || data.sleepMinutes === undefined || data.sleepMinutes <= 0 ? 'sin dato' : (data.sleepMinutes / 60).toFixed(1) + ' h'));
+    const received = ['steps', 'distanceKm', 'caloriesKcal', 'rhrBpm', 'sleepMinutes'].filter(function(key) { return data[key] !== null && data[key] !== undefined && data[key] > 0; });
+    lines.push('Campos recibidos: ' + (received.length ? received.join(', ') : 'ninguno'));
+    const metricReport = snap && snap.metadata && snap.metadata.telemetryReport;
+    if (metricReport) {
+      const reportLines = Object.keys(metricReport).map(function(name) {
+        const metric = metricReport[name] || {}, counts = metric.metricPointCounts || {};
+        const count = Object.keys(counts).reduce(function(sum, key) { return sum + Number(counts[key] || 0); }, 0);
+        return name + ': HTTP ' + (metric.httpStatus || 'sin código') + ', puntos ' + count + (metric.error ? ' (' + _orchestratorEscapeHtml_(metric.error) + ')' : '');
+      });
+      lines.push('Respuesta por consulta Google Fit: ' + (reportLines.join(' | ') || 'sin desglose'));
+      if (metricReport.location && metricReport.location.httpStatus === 403) {
+        const auth = _bioosGoogleFitLocationAuthorization_();
+        lines.push('Estado OAuth del scope fitness.location.read: ' + _orchestratorEscapeHtml_(auth.status) + '. Usa /reauth solo si el estado es REQUIRED.');
+      }
+    }
+    lines.push('Pulso actual en vivo: no disponible por esta ruta cloud; RHR solo si el proveedor lo sincroniza explícitamente.');
+  } catch (error) {
+    lines.push('Lectura fallida: ' + String(error && error.message || error).slice(0, 180));
   }
-
-  // 2. Mobvoi Primary Provider Probe
-  try {
-    const mobvoiSnap = typeof Sensor_Mobvoi_fetchSnapshot === 'function' ? Sensor_Mobvoi_fetchSnapshot({ sinceMs: Date.now() - 24*3600000 }) : null;
-    reportLines.push('\n⌚ <b>3. Mobvoi TicWatch Status:</b> ' + ((mobvoiSnap && mobvoiSnap.available) ? '🟢 ONLINE' : '🟡 ' + ((mobvoiSnap && mobvoiSnap.reason) || 'No configurado')));
-  } catch (mobErr) {
-    reportLines.push('\n⌚ <b>3. Mobvoi TicWatch:</b> 🔴 ' + mobErr.message);
-  }
-
-  // 3. Sensor Engine Master State
-  try {
-    const snap = typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot() : null;
-    reportLines.push('\n🧬 <b>4. Snapshot Maestro del Sensor Engine:</b>');
-    reportLines.push('• <b>Proveedor Activo:</b> <code>' + ((snap && snap.source) || 'Ninguno') + '</code>');
-    reportLines.push('• <b>Disponible:</b> <code>' + ((snap && snap.available) ? 'SÍ (ONLINE)' : 'NO (Ceguera Sensorial)') + '</code>');
-  } catch (snapErr) {
-    reportLines.push('\n🧬 <b>4. Sensor Engine Crash:</b> 🔴 ' + snapErr.message);
-  }
-
-  reportLines.push('\n<i>SRE Sonda de penetración con Aislamiento Granular y Degradación Grácil.</i>');
-
-  const reportText = reportLines.join('\n');
-  if (typeof _rawSystemNotify === 'function' && sourceChatId) {
-    _rawSystemNotify(reportText, sourceChatId);
-  }
-  return reportText;
+  lines.push('Mi Fitness -> Google Fit: BioOS consulta la ruta existente con OAuth del Apps Script. Este comando muestra si devuelve datos recientes; si la API legacy deja de responder, usar Health Connect directo en Android.');
+  const report = lines.join('\n');
+  if (typeof _rawSystemNotify === 'function' && sourceChatId) _rawSystemNotify(report, sourceChatId);
+  return report;
 }
 
 /**
@@ -496,6 +533,9 @@ function _generateExecutiveStatusDashboard_() {
   const nvram = (memory && memory.NVRAM) || {};
   const basal = nvram.L4_Basal || { baseline_rhr: 43, target_steps: 8000, target_sleep_hrs: 7.3 };
   const sessionEvents = (nvram.L1_Working && nvram.L1_Working.session_events) || [];
+  const semanticMemory = typeof Memory_listSemantic === 'function' ? Memory_listSemantic({ limit: 8 }) : [];
+  const biometricHistory = typeof Memory_listBiometricObservations === 'function' ? Memory_listBiometricObservations({ limit: 90 }) : [];
+  const outcomeRecords = (((nvram.L3_Semantic || {}).outcome_ledger || {}).records || []).slice(-5).reverse();
 
   // 1. Status Biométrico - Consulta al Sensor Engine Vivo
   let liveSensorData = {};
@@ -536,6 +576,7 @@ function _generateExecutiveStatusDashboard_() {
                    '• Referencia: RHR ' + (basal.baseline_rhr || 43) + ' bpm | Sueño ' + (basal.target_sleep_hrs || 7.3) + 'h | Pasos ' + (basal.target_steps || 8000) + '\n' +
                    '• Escudo: <i>Anti-Alucinación Activo</i>';
   }
+  biometryText += '\n• Días con observación biométrica estructurada en L2: <b>' + biometricHistory.length + '</b>';
 
   // 2. Cooldown Cognitivo & Memoria L1
   const l1Context = typeof _extractL1CognitiveContext === 'function'
@@ -563,6 +604,12 @@ function _generateExecutiveStatusDashboard_() {
   } else {
     l1DetailsText = '• <i>Sin intenciones ni síntomas recientes en NVRAM L1.</i>';
   }
+  const semanticText = semanticMemory.length
+    ? semanticMemory.map(function(atom) { return '• <code>' + _netEscapeHtml_(atom.id) + '</code> [' + _netEscapeHtml_(atom.type) + '/' + _netEscapeHtml_(atom.status) + '] ' + _netEscapeHtml_(atom.text); }).join('\n')
+    : '• Sin recuerdos semánticos guardados. Usa /recordar texto para conservar uno.';
+  const outcomeText = outcomeRecords.length
+    ? '\n<b>Sesiones confirmadas:</b> ' + outcomeRecords.map(function(record) { return '<code>' + _netEscapeHtml_(record.outcomeId) + '</code> ' + _netEscapeHtml_(record.assessment && record.assessment.observedOutcome || record.status); }).join(' | ')
+    : '\n<b>Sesiones confirmadas:</b> ninguna registrada.';
 
   // 4. Cola L0, Daemon Status & Firma Dinámica SRE
   const nowIso = new Date().toISOString();
@@ -574,9 +621,12 @@ function _generateExecutiveStatusDashboard_() {
          '📊 <b>1. Telemetría de Hardware:</b>\n' + biometryText + '\n\n' +
          '⚡ <b>2. Modo Cognitivo & Cooldown:</b>\n' + cognitiveModeText + '\n\n' +
          '🧬 <b>3. Memoria L1 Reciente:</b>\n' + l1DetailsText + '\n\n' +
-         '⚙️ <b>4. Infraestructura & Ingesta L0:</b>\n' + queueText + '\n\n' +
+         '🧠 <b>4. Memoria durable L3 (' + semanticMemory.length + ' recuerdos / ' + outcomeRecords.length + ' resultados recientes):</b>\n' + semanticText + outcomeText + '\n\n' +
+         '⚙️ <b>5. Infraestructura & Ingesta L0:</b>\n' + queueText + '\n\n' +
          '<i>Exocórtex calibrado y operando con Fricción Cognitiva Cero.</i>';
 }
+
+function _netEscapeHtml_(value) { return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 function registerTelegramWebhook() {
   return executeWithResilience("Registro_Webhook", () => {
@@ -620,77 +670,20 @@ function _isApprovedTelegramWebhookUrl_(value) {
  * Handler HTTP GET para diagnóstico y ejecución autónoma remota.
  */
 function doGet(e) {
-  try {
-    const p = e && e.parameter ? e.parameter : {};
-    const action = String(p.action || 'ping').trim();
-
-    if (action === 'reauth' || action === 'auth') {
-      var token = typeof ScriptApp !== 'undefined' ? ScriptApp.getOAuthToken() : null;
-      var snap = typeof getBiometricSnapshot === 'function' ? getBiometricSnapshot() : null;
-      var html = '<!DOCTYPE html><html><head><meta charset="utf-8"><title>BioOS OAuth Reauth</title>' +
-                 '<style>body{font-family:system-ui,sans-serif;padding:2rem;background:#0d1117;color:#c9d1d9;} ' +
-                 '.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1.5rem;max-width:600px;margin:auto;} ' +
-                 'h2{color:#58a6ff;} code{background:#21262d;padding:0.2rem 0.4rem;border-radius:4px;color:#7ee787;} ' +
-                 'a{color:#58a6ff;text-decoration:none;font-weight:bold;}</style></head><body>' +
-                 '<div class="card">' +
-                 '<h2>🟢 BioOS OAuth2 Re-Autenticación Completada</h2>' +
-                 '<p>Los permisos de Google Fit (Distancia, Pasos, RHR, Calorías, Sueño) se han actualizado exitosamente en el runtime.</p>' +
-                 '<p><b>Token Activo:</b> <code>' + (token ? token.substring(0, 15) + '...' : 'No disponible') + '</code></p>' +
-                 '<p><b>Snapshot Biométrico:</b> <code>' + ((snap && snap.available) ? 'ONLINE' : 'DEGRADED/NOMINAL') + '</code></p>' +
-                 '<p>Ya puedes regresar a tu cliente de <b>Telegram</b> y ejecutar <code>/doctor</code> o <code>/estado</code>.</p>' +
-                 '</div></body></html>';
-      return (typeof HtmlService !== 'undefined' && HtmlService.createHtmlOutput)
-        ? HtmlService.createHtmlOutput(html).setTitle("BioOS Re-Autenticación")
-        : ContentService.createTextOutput("🟢 BioOS OAuth2 Re-Autenticación Exitosa.").setMimeType(ContentService.MimeType.TEXT);
-    }
-    if (action === 'testMemory') {
-      const res = testMemoryReadWrite();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testMorningBriefing') {
-      const res = testMorningBriefingPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testNightBriefing') {
-      const res = testNightBriefingPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testCredenciales') {
-      const res = testCredenciales();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'diagnosticoTriggers') {
-      const res = diagnosticoDisparadores();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'reconcileTriggers') {
-      const res = reconcileCronobiologicalTriggers();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'installTriggers') {
-      const res = installCronobiologicalTriggers();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testWeeklyAudit') {
-      const res = testWeeklyAuditPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-    if (action === 'testMetaEvolution') {
-      const res = testMetaEvolutionPayload();
-      return ContentService.createTextOutput(JSON.stringify(res, null, 2)).setMimeType(ContentService.MimeType.JSON);
-    }
-
-    return ContentService.createTextOutput(JSON.stringify({
-      status: 'ONLINE',
-      system: 'BioOS Autonomous Cognitive Kernel',
-      version: typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : '5.3.0',
-      timestamp: new Date().toISOString()
-    }, null, 2)).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({
-      status: 'ERROR',
-      error: err.message,
-      stack: err.stack
-    }, null, 2)).setMimeType(ContentService.MimeType.JSON);
+  const action = String((e && e.parameter && e.parameter.action) || 'ping').trim();
+  if (action === 'reauth' || action === 'auth') {
+    return ContentService.createTextOutput('BioOS checks its existing Google Fit REST OAuth path first. Run /doctor for a live read. If it returns 401/403, re-authorize the existing Apps Script deployment with its approved Google Fit read scopes. Health Connect direct needs a future Android bridge.')
+      .setMimeType(ContentService.MimeType.TEXT);
   }
+  if (action !== 'ping') {
+    return ContentService.createTextOutput(JSON.stringify({ status: 'UNSUPPORTED_ACTION' }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  return ContentService.createTextOutput(JSON.stringify({
+    status: 'ONLINE',
+    system: 'BioOS',
+    version: typeof BIOOS_CONFIG !== 'undefined' ? BIOOS_CONFIG.VERSION : 'unknown',
+    timestamp: new Date().toISOString(),
+    scope: 'read-only liveness; no sensor data or operational actions'
+  })).setMimeType(ContentService.MimeType.JSON);
 }

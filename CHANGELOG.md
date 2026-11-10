@@ -1,5 +1,103 @@
 # Changelog
 
+## 8.15.1 - 2026-11-09
+
+- Archive status reports pages processed, current source type, last attempt/progress and whether a worker trigger is pending; source completion no longer hides page-level progress.
+- Pausing now serializes with the active archive worker so a just-finished page cannot overwrite `PAUSED` and schedule another trigger.
+- The private `BioOS_Fit_Archive/` Drive folder is excluded from Git to prevent raw health exports from entering commits.
+
+## 8.15.0 - 2026-11-09
+
+- Adds `/syncfit` to copy paginated Google Fit data source datasets into resumable gzip shards in the owner's BioOS Drive, with a Drive catalog, checksums, cursors, status, pause/resume and daily incremental sync.
+- Natural-language cadence-history queries now calculate min/average/max from original archived points and keep user-submitted visual reports separate from provider telemetry.
+- Coverage and access gaps are time-bounded; incomplete backfills, denied sources, unreadable catalogs and truncated source inventories cannot be reported as complete absence.
+- Raw biometric samples stay in private Drive files; semantic memory stores only a catalog pointer and summary. No new OAuth scopes or writes to Google Fit.
+
+## 8.14.1 - 2026-11-09
+
+- Cadence/stride history questions now read their own L2 report partition; they no longer fall through to generic biometrics or claim absence without querying the durable store.
+- The same-turn photo flow refreshes its L2 result after storing extracted metrics, so a recovered question sees facts written from that image immediately.
+- Empty L2 and unavailable L2 reader produce distinct factual responses.
+
+## 8.14.0 - 2026-11-09
+
+- Technical cadence/stride panels are extracted and persisted independently of full session cards, with Telegram photo event and `reported` provenance.
+- A recent running-technique question can be recovered from L1 when Telegram dispatches its following photo as a separate job.
+- Photo inference failures and unreadable panels now receive an explicit, actionable response instead of generic SRE degradation text.
+- Technique guidance is evidence-bounded; cadence is not treated as a universal target, and a single image is not used to diagnose gait.
+
+## 8.13.0 - 2026-11-09
+
+- `/doctor` checks the single `fitness.location.read` permission needed for distance; private `/reauth` returns its Apps Script consent URL only when authorization is actually required. No scopes are added.
+- Activity vs. performance question plans are separated: a two-run comparison reads two sessions; last-run assessment reads one and reports when a national benchmark is missing.
+- Multimodal compiler extracts only visible workout values from user-submitted images, anchors them to the Telegram evidence event, and stores validated metrics in structured L2 as `reported` without keeping image bytes.
+- An image report links to a Google Fit session only when there is one unique local start within 15 minutes. Reports retain their own source and pace consistency; sources are never overwritten or conflated.
+
+## 8.12.0 - 2026-11-09
+
+- Historical run questions are routed to a Google Fit session reader for the latest running, jogging, and treadmill sessions, with exact per-session distance requests and derived pace comparisons.
+- Running sessions and source timestamps are persisted as structured L2 facts; cached distance is reused only for the same Google Fit session ID.
+- `/doctor` now shows a sanitized Google API status/code/reason for failed aggregates, without exposing raw response bodies or credentials.
+- Missing sessions, distance, or duration remain explicitly unavailable; BioOS does not infer pace from steps or calories.
+
+## 8.11.0 - 2026-11-09
+
+- Historical sleep-time questions now use a deterministic route even without the words “average” or “sleep”.
+- Google Fit history reads sleep sessions (`activityType=72`) and exact sleep-stage points, preserving start/end timestamps and per-endpoint HTTP/point counts.
+- Session boundaries are persisted as structured L2 `sleep_session` records and can be retrieved later if the source is temporarily unavailable; no times are fabricated from baselines.
+- `/doctor` shows HTTP status and point counts for each Google Fit aggregate, distinguishing successful empty queries from populated fields.
+
+## 8.10.0 - 2026-11-09
+
+- Morning briefing reports the prior local waking day and preceding night's sleep; evening briefing reports activity from the current local day. Both print their measurement window.
+- Google Fit range cache keys include activity and sleep bounds, preventing reuse of a snapshot for a different window.
+- Last-week sleep/activity questions now query daily Google Fit buckets for the prior calendar week and return averages or an explicit missing-data result instead of a generic coaching response.
+- Historical sleep segments are aligned to their waking date and unavailable values remain missing.
+
+## 8.9.0 - 2026-11-09
+
+- Sensor activity totals now use the current local calendar day; sleep segments use the preceding 24-hour window and exclude awake/out-of-bed stages.
+- `/doctor` reports exact UTC windows and labels Google Fit calories as total expenditure including resting energy.
+- User questions now reach the final synthesis verbatim, include observation time and agenda availability, and are routed to up to two keyword-matched specialists instead of the first two registry entries.
+- Structured daily sensor snapshots persist in L2 and link to user-reported semantic memories by evidence ID; the orchestrator receives recent measurements plus the generated evidence graph.
+- Partial recovery telemetry no longer authorizes fixed training loads or claims that RHR/sleep are known.
+
+## 8.8.1 - 2026-11-09
+
+- Fixed sensor normalization so absent `null` values remain missing instead of becoming false zero readings.
+- Cached successful Google Fit snapshots for ten minutes so `/doctor`, `/memoria`, and briefings reuse the same recent measurement inside the API cooldown.
+- `/doctor` now reports received metric fields, renders zero distance/sleep as unavailable, and distinguishes synced history from a live heart-rate stream.
+
+## 8.8.0 - 2026-11-09
+
+- Restored the existing Google Fit REST path as failover when Health Connect has no Android bridge and when Mobvoi is unavailable; `/doctor` remains the live validation and no Fit response is assumed.
+- Added persistent L3 semantic atoms, private versioned 96D local feature vectors and cosine retrieval in orchestrator/briefing context. Added `/recordar`, `/memoria`, `/olvidar ID`, and explicit `/resultado` storage.
+- Added provenance/expiry, a 300-memory cap, the 4 MB NVRAM hard cap, and recovery-slot snapshots for semantic/outcome writes.
+- Updated the Xiaomi Watch 2 route and documented Google Fit as a compatibility path that must migrate to Health Connect.
+
+## 8.7.1 - 2026-11-09
+
+- Morning briefings now read recent user-reported training intent from L1 working memory, label it as reported rather than verified, and avoid asking for the same plan again when one was recently supplied.
+- Sensorless briefings now identify telemetry as unavailable and state that basal profile values are not today's measurements.
+
+## 8.7.0 - 2026-11-09
+
+- Changed trigger reconciliation to keep only daily morning/evening briefings and remove weekly ACWR/monthly self-tuning jobs. The production trigger list still requires a runtime reconciliation.
+- Made the health check read-only for Queue_NLP: it reports missing/mismatched schema without creating sheets, setting properties, or migrating data.
+- Added an owner-only Apps Script API function for sending a system report to the configured Telegram chat; delivery requires the Apps Script project and OAuth client to share a standard Google Cloud project. The report includes architecture, operational check statuses, trigger count and memory structure/counts, not raw biometric values or secrets.
+- Added an `executionApi` manifest entry restricted to `MYSELF` for authenticated owner-run reporting.
+- Production rollout updated the known versioned web-app deployments so public legacy GET actions that mutate memory/triggers or return token fragments are removed.
+
+## 8.6.0 - 2026-11-08
+
+## 8.6.0 - 2026-11-08
+
+- Scheduled morning and evening reports now render only observed sensor fields and explicitly identify missing data; they no longer ask an LLM to invent workouts, macros, or sleep schedules.
+- Removed average exercise/general heart rate from the Google Fit adapter's RHR field.
+- Disabled weekly ACWR reports and automatic monthly weight tuning until verified workout outcomes are connected.
+- Added release-tag deployment automation. The deploy script requires one explicit Apps Script deployment ID, keeps clasp credentials read-only, and updates no other deployments.
+- Health checks now report that Mi Fitness/Health Connect ingestion is not yet connected.
+
 ## 5.4.0 - 2026-08-21
 
 - **Resolución de Incidente Crítico: Tubería de Datos Biométricos & Integridad Numérica**:
