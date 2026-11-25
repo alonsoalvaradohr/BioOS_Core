@@ -7,6 +7,8 @@
 *.key
 *.p12
 *.pfx
+credentials.json
+client_secret*.json
 
 # === DATOS BIOMÉTRICOS Y RUNTIME PRIVADOS (INVIOLABLE) ===
 BioOS_NVRAM*.json
@@ -14,6 +16,8 @@ BioOS_NVRAM*.bak
 BioOS_ROM.json
 BioOS_NVRAM.slotA.json
 BioOS_NVRAM.slotB.json
+*.nvram.json
+*.rom.json
 
 # === ATAJOS DE GOOGLE DRIVE (SIN VALOR EN GIT) ===
 *.gsheet
