@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /** BioOS v5.4 bounded cognitive orchestration & Active Inference Coprocessor. */
 const _ORCHESTRATOR_MAX_SPECIALISTS = 2;
 const _ORCHESTRATOR_MIN_NEXT_CALL_MS = 5000;

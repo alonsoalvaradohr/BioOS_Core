@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /**
  * Read-only operational health checks.  These functions deliberately do not
  * call the VFS/repository helpers because those helpers may repair caches or

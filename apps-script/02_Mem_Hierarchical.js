@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /** Durable NVRAM store: plaintext primary plus two checksummed recovery slots. */
 var MEM_SCHEMA_VERSION = 2;
 var MEM_SLOT_NAMES = { A: 'BioOS_NVRAM.slotA.json', B: 'BioOS_NVRAM.slotB.json' };

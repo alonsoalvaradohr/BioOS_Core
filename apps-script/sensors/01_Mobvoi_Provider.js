@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /** Primary Mobvoi provider. Required Script Properties: MOBVOI_API_ENDPOINT and MOBVOI_API_TOKEN. */
 function Sensor_Mobvoi_fetchSnapshot(options) {
   var sinceMs = options && typeof options.sinceMs === 'number' ? options.sinceMs : Date.now() - Sensor_HOURS_24_MS;

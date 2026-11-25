@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use BioOS Core in your research, experiments, or clinical/cognitive models, please cite it as below."
+title: "BioOS Core: Autonomous Cognitive Active Inference Kernel"
+version: "8.5.0"
+date-released: "2026-11-25"
+license: "AGPL-3.0-or-later"
+repository-code: "https://github.com/alonsoalvaradohr/BioOS_Core"
+authors:
+  - family-names: "Alvarado Hernández"
+    given-names: "Alonso"
+    alias: "alonsoalvaradohr"
+abstract: "BioOS Core is an autonomous cognitive active inference kernel and bio-telemetry operating substrate designed for continuous multi-agent orchestration, state estimation, and adaptive biological feedback."
+keywords:
+  - "active inference"
+  - "cognitive architecture"
+  - "autonomous agents"
+  - "biotelemetry"
+  - "google apps script"
+  - "gemini"

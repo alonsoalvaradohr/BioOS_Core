@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /** Controlled ROM governance: models propose; only an explicit human call applies. */
 var META_REVIEW_FOLDER_NAME = 'BioOS_ROM_Review_Audit';
 var META_PROPOSAL_TTL_MS = 7 * 24 * 60 * 60 * 1000;

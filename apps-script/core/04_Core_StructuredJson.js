@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /**
  * Parses an LLM/API structured JSON response into Core_Result. It accepts one
  * object or array embedded in surrounding prose, but never silently returns an

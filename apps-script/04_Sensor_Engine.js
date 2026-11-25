@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /**
  * Sensor entry point. Providers return the Sensor_Snapshot contract declared
  * in sensors/00_Sensor_Contracts.js; callers must treat unavailable data as

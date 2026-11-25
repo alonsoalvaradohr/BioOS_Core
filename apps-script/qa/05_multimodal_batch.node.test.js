@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /* Node-only multimodal regression. Apps Script loads this file as a no-op. */
 if (typeof require !== 'undefined') {
 const fs = require('fs'); const path = require('path'); const vm = require('vm');

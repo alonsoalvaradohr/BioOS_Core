@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /**
  * @typedef {{rhrBpm:(number|null), sleepMinutes:(number|null), steps:(number|null)}} Sensor_Data
  * @typedef {{rhrBpm:boolean, sleepMinutes:boolean, steps:boolean}} Sensor_MissingData

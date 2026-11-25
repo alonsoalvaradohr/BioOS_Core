@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /**
  * Pure, fail-closed contracts for the cognitive kernel.  These functions do
  * not call Apps Script services, generate identifiers, read the clock, or

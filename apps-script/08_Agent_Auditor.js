@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /** SPADE: deterministic policy is the first and last authority for Tasks. */
 function auditAndValidateHypothesis(specialistName, hypothesis) {
   return executeWithResilience("Auditor_SPADE_" + specialistName, () => {

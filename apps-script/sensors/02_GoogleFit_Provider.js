@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /** Google Fit REST contingency. Requires OAuth scopes plus Fitness API enabled in the Cloud project. */
 function Sensor_GoogleFit_fetchFallback(options) {
   var sinceMs = options && typeof options.sinceMs === 'number' ? options.sinceMs : Date.now() - Sensor_HOURS_24_MS;

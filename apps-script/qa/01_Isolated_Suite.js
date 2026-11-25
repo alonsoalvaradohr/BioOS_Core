@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /**
  * Isolated Phase-0 QA runner. It proves contracts against fakes only; it is
  * not an integration test and intentionally has zero external side effects.

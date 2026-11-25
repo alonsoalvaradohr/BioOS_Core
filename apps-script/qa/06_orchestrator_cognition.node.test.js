@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /* Node-only contract test for Orchestrator Cognition, Telemetry and Anti-Hallucination. */
 if (typeof require !== 'undefined') {
 const fs = require('fs');

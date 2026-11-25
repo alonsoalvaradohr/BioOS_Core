@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /**
  * Explicit, approval-gated runtime maintenance. No trigger or model may call
  * these entry points. Read-only status is the sole unauthenticated operation.

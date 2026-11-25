@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2024-2026 Alonso Alvarado Hernández <alonsoalvaradohr>
 /** BioOS L0 repository. Owns Spreadsheet I/O and one ScriptLock per operation. */
 var REPO_DB_ID_PROPERTY_='BIOOS_DB_ID', REPO_DB_NAME_PROPERTY_='BIOOS_DB_NAME', REPO_DB_NAME_DEFAULT_='BioOS_Database';
 var REPO_QUEUE_NAME_='Queue_NLP', REPO_QUEUE_HEADERS_=['RECEIVED_AT','JOB_ID','IDEMPOTENCY_KEY','STATUS','ATTEMPTS','LEASE_UNTIL','MESSAGE','METADATA_JSON','LAST_ERROR'];
